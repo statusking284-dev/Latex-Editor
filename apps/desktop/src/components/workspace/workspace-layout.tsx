@@ -52,7 +52,7 @@ import { BibliographyImportDialog } from "./bibliography-import-dialog";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { TUTORIAL_STEPS } from "@/lib/tutorial-steps";
 import { VelumMark } from "@/components/brand/velum-brand";
-import { FloatingAiAssistant } from "@/components/ai-chat/floating-ai-assistant";
+import { InbuiltAiChatBar } from "@/components/ai-chat/inbuilt-ai-chat-bar";
 
 const sidePanelItems: Array<{
   id: WorkspaceSidePanel;
@@ -510,6 +510,9 @@ export function WorkspaceLayout() {
                     <Maximize2Icon className="size-4" />
                   )}
                 </button>
+
+                {/* Inbuilt AI Chat Bar docked at bottom of editor (Prism style) */}
+                <InbuiltAiChatBar />
               </div>
             </Panel>
           )}
@@ -569,9 +572,6 @@ export function WorkspaceLayout() {
         )}
         {!focusMode && !reviewMode && <StatusBar />}
       </div>
-
-      {/* Floating On-Screen AI LaTeX Copilot (Movable anywhere across screen) */}
-      <FloatingAiAssistant />
     </div>
   );
 }

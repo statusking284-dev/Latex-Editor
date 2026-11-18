@@ -52,6 +52,7 @@ import { BibliographyImportDialog } from "./bibliography-import-dialog";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { TUTORIAL_STEPS } from "@/lib/tutorial-steps";
 import { VelumMark } from "@/components/brand/velum-brand";
+import { FloatingAiAssistant } from "@/components/ai-chat/floating-ai-assistant";
 
 const sidePanelItems: Array<{
   id: WorkspaceSidePanel;
@@ -568,6 +569,9 @@ export function WorkspaceLayout() {
         )}
         {!focusMode && !reviewMode && <StatusBar />}
       </div>
+
+      {/* Floating On-Screen AI LaTeX Copilot (Movable anywhere across screen) */}
+      <FloatingAiAssistant />
     </div>
   );
 }

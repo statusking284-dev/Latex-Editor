@@ -2158,6 +2158,34 @@ export function LatexEditor() {
     });
   }, [editorHighlightTheme, resolvedTheme]);
 
+  // Listen for direct editor content updates (e.g. from the floating AI assistant)
+  useEffect(() => {
+    const handleApplyEditorContent = (event: Event) => {
+      const customEvent = event as CustomEvent<{ content: string; recompile?: boolean }>;
+      const newText = customEvent.detail?.content;
+      if (typeof newText !== "string") return;
+
+      const view = viewRef.current;
+      if (view) {
+        const currentDoc = view.state.doc.toString();
+        if (currentDoc !== newText) {
+          view.dispatch({
+            changes: { from: 0, to: currentDoc.length, insert: newText },
+          });
+        }
+      }
+      setContent(newText);
+      if (customEvent.detail?.recompile) {
+        compileRef.current?.();
+      }
+    };
+
+    window.addEventListener("apply-editor-content", handleApplyEditorContent as EventListener);
+    return () => {
+      window.removeEventListener("apply-editor-content", handleApplyEditorContent as EventListener);
+    };
+  }, [setContent]);
+
   // Apply editor text size changes without rebuilding the editor.
   useEffect(() => {
     const view = viewRef.current;

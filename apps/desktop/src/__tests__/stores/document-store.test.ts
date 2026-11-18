@@ -1,0 +1,797 @@
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
+import {
+  readDir,
+  readTextFile,
+  stat,
+  writeTextFile,
+} from "@tauri-apps/plugin-fs";
+import {
+  useDocumentStore,
+  getCurrentPdfBytes,
+  clearPdfBytesCache,
+  resolveTexRoot,
+  hasDocumentclass,
+  type ProjectFile,
+} from "@/stores/document-store";
+
+// Mock history store
+vi.mock("@/stores/history-store", () => ({
+  useHistoryStore: {
+    getState: vi.fn(() => ({
+      init: vi.fn(() => Promise.resolve()),
+      loadSnapshots: vi.fn(() => Promise.resolve()),
+      createSnapshot: vi.fn(() => Promise.resolve()),
+    })),
+  },
+}));
+
+function makeFile(overrides: Partial<ProjectFile> = {}): ProjectFile {
+  return {
+    id: "main.tex",
+    name: "main.tex",
+    relativePath: "main.tex",
+    absolutePath: "/project/main.tex",
+    type: "tex",
+    content: "Hello World",
+    isDirty: false,
+    ...overrides,
+  };
+}
+
+describe("hasDocumentclass", () => {
+  it("detects a real \\documentclass", () => {
+    expect(hasDocumentclass("\\documentclass[12pt]{article}")).toBe(true);
+  });
+
+  it("ignores \\documentclass inside comments", () => {
+    expect(
+      hasDocumentclass(
+        "%% 2. In main.tex, right after \\documentclass{discothesis} add:\n\\usepackage{ebgaramond}",
+      ),
+    ).toBe(false);
+  });
+
+  it("still detects it after an escaped percent", () => {
+    expect(hasDocumentclass("50\\% off \\documentclass{book}")).toBe(true);
+  });
+
+  it("ignores commented \\documentclass in CRLF files", () => {
+    expect(
+      hasDocumentclass(
+        "%% right after \\documentclass{discothesis} add:\r\n\\usepackage{ebgaramond}\r\n",
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("resolveTexRoot", () => {
+  it("does not treat a config file with commented \\documentclass as root", () => {
+    const files = [
+      makeFile({
+        id: "_main.tex",
+        name: "_main.tex",
+        relativePath: "_main.tex",
+        content: "\\documentclass{discothesis}\n\\begin{document}",
+      }),
+      makeFile({
+        id: "thesis-config.tex",
+        name: "thesis-config.tex",
+        relativePath: "thesis-config.tex",
+        content:
+          "%% In main.tex, right after \\documentclass{discothesis} add:\n\\usepackage{ebgaramond}",
+      }),
+      makeFile({
+        id: "chapter01.tex",
+        name: "chapter01.tex",
+        relativePath: "chapter01.tex",
+        content: "\\chapter{Introduction}",
+      }),
+    ];
+
+    // Compiling from the config file itself resolves to the real root
+    expect(resolveTexRoot("thesis-config.tex", files)).toBe("_main.tex");
+    // Compiling from an included chapter resolves to the real root
+    expect(resolveTexRoot("chapter01.tex", files)).toBe("_main.tex");
+    // The real root resolves to itself
+    expect(resolveTexRoot("_main.tex", files)).toBe("_main.tex");
+  });
+
+  it("resolves the root from non-tex files (.sty, .bib, images)", () => {
+    const files = [
+      makeFile({
+        id: "frontMatter.tex",
+        name: "frontMatter.tex",
+        relativePath: "frontMatter.tex",
+        content: "\\documentclass{elsarticle}\n\\begin{document}",
+      }),
+      makeFile({
+        id: "tkz-graph.sty",
+        name: "tkz-graph.sty",
+        relativePath: "tkz-graph.sty",
+        type: "style",
+        content: "\\ProvidesPackage{tkz-graph}",
+      }),
+      makeFile({
+        id: "refs.bib",
+        name: "refs.bib",
+        relativePath: "refs.bib",
+        type: "bib",
+        content: "@article{a, title={T}}",
+      }),
+      makeFile({
+        id: "fig.png",
+        name: "fig.png",
+        relativePath: "fig.png",
+        type: "image",
+        content: undefined,
+      }),
+    ];
+
+    expect(resolveTexRoot("tkz-graph.sty", files)).toBe("frontMatter.tex");
+    expect(resolveTexRoot("refs.bib", files)).toBe("frontMatter.tex");
+    expect(resolveTexRoot("fig.png", files)).toBe("frontMatter.tex");
+  });
+
+  it("falls back to the file itself when no root exists", () => {
+    const files = [
+      makeFile({
+        id: "notes.sty",
+        name: "notes.sty",
+        relativePath: "notes.sty",
+        type: "style",
+        content: "\\ProvidesPackage{notes}",
+      }),
+    ];
+    expect(resolveTexRoot("notes.sty", files)).toBe("notes.sty");
+  });
+});
+
+describe("useDocumentStore", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearPdfBytesCache();
+    useDocumentStore.setState({
+      projectRoot: "/project",
+      files: [makeFile()],
+      folders: [],
+      activeFileId: "main.tex",
+      openFileIds: ["main.tex"],
+      cursorPosition: 5, // after "Hello"
+      selectionRange: null,
+      jumpToPosition: null,
+      isThreadOpen: false,
+      pdfRevision: 0,
+      compileError: null,
+      isCompiling: false,
+      pendingRecompile: false,
+      isSaving: false,
+      initialized: true,
+    });
+  });
+
+  describe("getActiveFile logic", () => {
+    it("insertAtCursor finds the correct active file", () => {
+      // Validates that getActiveFile() correctly resolves the active file
+      // by confirming insertAtCursor modifies the right file's content
+      useDocumentStore.getState().insertAtCursor("!");
+      const file = useDocumentStore
+        .getState()
+        .files.find((f) => f.id === "main.tex")!;
+      expect(file.content).toBe("Hello! World");
+    });
+
+    it("returns null for nonexistent activeFileId (no-op on insert)", () => {
+      useDocumentStore.setState({ activeFileId: "nonexistent" });
+      useDocumentStore.getState().insertAtCursor("text");
+      // Files should not be modified
+      const file = useDocumentStore
+        .getState()
+        .files.find((f) => f.id === "main.tex")!;
+      expect(file.content).toBe("Hello World");
+    });
+  });
+
+  describe("openProject", () => {
+    it("re-authorizes the project directory before scanning", async () => {
+      const projectPath = "E:\\overleaf-cache\\论文项目";
+      let resolveAuthorization!: () => void;
+      const authorizationPromise = new Promise<void>((resolve) => {
+        resolveAuthorization = resolve;
+      });
+
+      vi.mocked(invoke).mockReturnValue(
+        authorizationPromise as ReturnType<typeof invoke>,
+      );
+      vi.mocked(readDir).mockResolvedValue([
+        { name: "main.tex", isDirectory: false },
+      ] as any);
+      vi.mocked(readTextFile).mockResolvedValue("\\documentclass{article}");
+
+      const openProjectPromise = useDocumentStore
+        .getState()
+        .openProject(projectPath);
+
+      expect(invoke).toHaveBeenCalledWith("allow_project_directory", {
+        rootPath: projectPath,
+      });
+      expect(readDir).not.toHaveBeenCalled();
+
+      resolveAuthorization();
+      await openProjectPromise;
+
+      expect(readDir).toHaveBeenCalled();
+    });
+
+    it("skips Python cache directories and bytecode files during open", async () => {
+      vi.mocked(invoke).mockResolvedValue(undefined as never);
+      vi.mocked(readDir).mockImplementation(async (dir: string | URL) => {
+        if (dir === "/project") {
+          return [
+            { name: "__pycache__", isDirectory: true },
+            { name: "main.tex", isDirectory: false },
+            { name: "tool.py", isDirectory: false },
+            { name: "compiled.pyc", isDirectory: false },
+          ] as any;
+        }
+
+        throw new Error(`Unexpected readDir path: ${dir}`);
+      });
+      vi.mocked(stat).mockResolvedValue({ size: 32 } as any);
+      vi.mocked(readTextFile).mockImplementation(async (path: string | URL) => {
+        if (path === "/project/main.tex") {
+          return "\\documentclass{article}";
+        }
+        if (path === "/project/tool.py") {
+          return "print('hello')";
+        }
+        throw new Error(`Unexpected readTextFile path: ${path}`);
+      });
+
+      await useDocumentStore.getState().openProject("/project");
+
+      expect(readDir).toHaveBeenCalledWith("/project");
+      expect(readDir).not.toHaveBeenCalledWith("/project/__pycache__");
+      // stat is called for every non-PDF file now (not just image/other),
+      // to capture mtime for the "last modified" display.
+      expect(stat).toHaveBeenCalledTimes(2);
+      expect(stat).toHaveBeenCalledWith("/project/tool.py");
+      expect(stat).toHaveBeenCalledWith("/project/main.tex");
+      expect(readTextFile).toHaveBeenCalledTimes(2);
+      expect(readTextFile).not.toHaveBeenCalledWith("/project/compiled.pyc");
+      expect(
+        useDocumentStore.getState().files.map((file) => file.relativePath),
+      ).toEqual(["main.tex", "tool.py"]);
+    });
+  });
+
+  describe("insertAtCursor", () => {
+    it("inserts text at cursor position", () => {
+      useDocumentStore.getState().insertAtCursor(", Beautiful");
+      const state = useDocumentStore.getState();
+      const file = state.files.find((f) => f.id === "main.tex")!;
+      expect(file.content).toBe("Hello, Beautiful World");
+      expect(file.isDirty).toBe(true);
+    });
+
+    it("updates cursor position after insert", () => {
+      useDocumentStore.getState().insertAtCursor("!");
+      expect(useDocumentStore.getState().cursorPosition).toBe(6);
+    });
+
+    it("inserts at beginning when cursor is at 0", () => {
+      useDocumentStore.setState({ cursorPosition: 0 });
+      useDocumentStore.getState().insertAtCursor(">> ");
+      const file = useDocumentStore
+        .getState()
+        .files.find((f) => f.id === "main.tex")!;
+      expect(file.content).toBe(">> Hello World");
+    });
+
+    it("inserts at end when cursor is at content length", () => {
+      useDocumentStore.setState({ cursorPosition: 11 }); // "Hello World".length
+      useDocumentStore.getState().insertAtCursor("!");
+      const file = useDocumentStore
+        .getState()
+        .files.find((f) => f.id === "main.tex")!;
+      expect(file.content).toBe("Hello World!");
+    });
+
+    it("does nothing for image files", () => {
+      useDocumentStore.setState({
+        files: [makeFile({ type: "image", content: undefined })],
+      });
+      useDocumentStore.getState().insertAtCursor("text");
+      const file = useDocumentStore.getState().files[0];
+      expect(file.content).toBeUndefined();
+    });
+
+    it("handles empty content", () => {
+      useDocumentStore.setState({
+        files: [makeFile({ content: "" })],
+        cursorPosition: 0,
+      });
+      useDocumentStore.getState().insertAtCursor("New text");
+      const file = useDocumentStore.getState().files[0];
+      expect(file.content).toBe("New text");
+    });
+  });
+
+  describe("replaceSelection", () => {
+    it("replaces a range of text", () => {
+      // Replace "World" (indices 6-11) with "Universe"
+      useDocumentStore.getState().replaceSelection(6, 11, "Universe");
+      const file = useDocumentStore
+        .getState()
+        .files.find((f) => f.id === "main.tex")!;
+      expect(file.content).toBe("Hello Universe");
+      expect(file.isDirty).toBe(true);
+    });
+
+    it("updates cursor position to end of replacement", () => {
+      useDocumentStore.getState().replaceSelection(6, 11, "Universe");
+      expect(useDocumentStore.getState().cursorPosition).toBe(14); // 6 + "Universe".length
+    });
+
+    it("can delete text (empty replacement)", () => {
+      useDocumentStore.getState().replaceSelection(5, 11, "");
+      const file = useDocumentStore
+        .getState()
+        .files.find((f) => f.id === "main.tex")!;
+      expect(file.content).toBe("Hello");
+    });
+
+    it("can insert at a point (start === end)", () => {
+      useDocumentStore.getState().replaceSelection(5, 5, " Beautiful");
+      const file = useDocumentStore
+        .getState()
+        .files.find((f) => f.id === "main.tex")!;
+      expect(file.content).toBe("Hello Beautiful World");
+    });
+
+    it("does nothing for pdf files", () => {
+      useDocumentStore.setState({
+        files: [makeFile({ type: "pdf", content: "pdf-data" })],
+      });
+      useDocumentStore.getState().replaceSelection(0, 3, "new");
+      expect(useDocumentStore.getState().files[0].content).toBe("pdf-data");
+    });
+  });
+
+  describe("findAndReplace", () => {
+    it("replaces first occurrence", () => {
+      const result = useDocumentStore
+        .getState()
+        .findAndReplace("World", "Universe");
+      expect(result).toBe(true);
+      const file = useDocumentStore
+        .getState()
+        .files.find((f) => f.id === "main.tex")!;
+      expect(file.content).toBe("Hello Universe");
+      expect(file.isDirty).toBe(true);
+    });
+
+    it("returns false when find string is not found", () => {
+      const result = useDocumentStore.getState().findAndReplace("xyz", "abc");
+      expect(result).toBe(false);
+      const file = useDocumentStore
+        .getState()
+        .files.find((f) => f.id === "main.tex")!;
+      expect(file.isDirty).toBe(false); // not modified
+    });
+
+    it("replaces only first occurrence (String.replace behavior)", () => {
+      useDocumentStore.setState({
+        files: [makeFile({ content: "aaa bbb aaa" })],
+      });
+      useDocumentStore.getState().findAndReplace("aaa", "ccc");
+      const file = useDocumentStore.getState().files[0];
+      expect(file.content).toBe("ccc bbb aaa");
+    });
+
+    it("handles special regex characters in find string", () => {
+      useDocumentStore.setState({
+        files: [makeFile({ content: "price is $10.00" })],
+      });
+      const result = useDocumentStore
+        .getState()
+        .findAndReplace("$10.00", "€12.00");
+      expect(result).toBe(true);
+      expect(useDocumentStore.getState().files[0].content).toBe(
+        "price is €12.00",
+      );
+    });
+
+    it("does nothing for image files", () => {
+      useDocumentStore.setState({
+        files: [makeFile({ type: "image" })],
+      });
+      const result = useDocumentStore.getState().findAndReplace("Hello", "Bye");
+      expect(result).toBe(false);
+    });
+  });
+
+  describe("updateFileContent", () => {
+    it("updates content and marks dirty", () => {
+      useDocumentStore.getState().updateFileContent("main.tex", "New content");
+      const file = useDocumentStore
+        .getState()
+        .files.find((f) => f.id === "main.tex")!;
+      expect(file.content).toBe("New content");
+      expect(file.isDirty).toBe(true);
+    });
+
+    it("does not affect other files", () => {
+      useDocumentStore.setState({
+        files: [
+          makeFile(),
+          makeFile({
+            id: "other.tex",
+            name: "other.tex",
+            relativePath: "other.tex",
+            content: "Other",
+          }),
+        ],
+      });
+      useDocumentStore.getState().updateFileContent("main.tex", "Changed");
+      const other = useDocumentStore
+        .getState()
+        .files.find((f) => f.id === "other.tex")!;
+      expect(other.content).toBe("Other");
+      expect(other.isDirty).toBe(false);
+    });
+  });
+
+  describe("addFile", () => {
+    it("adds a new file and sets it active", () => {
+      const id = useDocumentStore.getState().addFile({
+        name: "refs.bib",
+        relativePath: "refs.bib",
+        absolutePath: "/project/refs.bib",
+        type: "bib",
+        content: "@article{...}",
+      });
+      expect(id).toBe("refs.bib");
+      const state = useDocumentStore.getState();
+      expect(state.files).toHaveLength(2);
+      expect(state.activeFileId).toBe("refs.bib");
+    });
+  });
+
+  describe("setActiveFile", () => {
+    it("changes active file and resets selection", () => {
+      useDocumentStore.setState({
+        files: [
+          makeFile(),
+          makeFile({ id: "ch1.tex", name: "ch1.tex", relativePath: "ch1.tex" }),
+        ],
+        cursorPosition: 100,
+        selectionRange: { start: 10, end: 20 },
+      });
+      useDocumentStore.getState().setActiveFile("ch1.tex");
+      const state = useDocumentStore.getState();
+      expect(state.activeFileId).toBe("ch1.tex");
+      // cursorPosition is preserved — the editor restores it from per-file cache
+      expect(state.cursorPosition).toBe(100);
+      expect(state.selectionRange).toBeNull();
+    });
+  });
+
+  describe("editor tabs", () => {
+    const threeFiles = () => [
+      makeFile(),
+      makeFile({ id: "ch1.tex", name: "ch1.tex", relativePath: "ch1.tex" }),
+      makeFile({ id: "refs.bib", name: "refs.bib", relativePath: "refs.bib" }),
+    ];
+
+    it("setActiveFile previews without pinning a tab", () => {
+      useDocumentStore.setState({ files: threeFiles() });
+      useDocumentStore.getState().setActiveFile("ch1.tex");
+      const state = useDocumentStore.getState();
+      expect(state.activeFileId).toBe("ch1.tex");
+      expect(state.openFileIds).toEqual(["main.tex"]);
+    });
+
+    it("a second preview replaces the first (no piling)", () => {
+      useDocumentStore.setState({ files: threeFiles() });
+      useDocumentStore.getState().setActiveFile("ch1.tex");
+      useDocumentStore.getState().setActiveFile("refs.bib");
+      const state = useDocumentStore.getState();
+      expect(state.activeFileId).toBe("refs.bib");
+      expect(state.openFileIds).toEqual(["main.tex"]);
+    });
+
+    it("openFileInTab pins the file and activates it", () => {
+      useDocumentStore.setState({ files: threeFiles() });
+      useDocumentStore.getState().openFileInTab("ch1.tex");
+      const state = useDocumentStore.getState();
+      expect(state.activeFileId).toBe("ch1.tex");
+      expect(state.openFileIds).toEqual(["main.tex", "ch1.tex"]);
+    });
+
+    it("openFileInTab does not duplicate an already-pinned tab", () => {
+      useDocumentStore.setState({
+        files: threeFiles(),
+        openFileIds: ["main.tex", "ch1.tex"],
+      });
+      useDocumentStore.getState().openFileInTab("ch1.tex");
+      expect(useDocumentStore.getState().openFileIds).toEqual([
+        "main.tex",
+        "ch1.tex",
+      ]);
+    });
+
+    it("editing a previewed file pins its tab", () => {
+      useDocumentStore.setState({ files: threeFiles() });
+      useDocumentStore.getState().setActiveFile("ch1.tex");
+      useDocumentStore.getState().updateFileContent("ch1.tex", "edited");
+      expect(useDocumentStore.getState().openFileIds).toEqual([
+        "main.tex",
+        "ch1.tex",
+      ]);
+    });
+
+    it("editing a background file does not pin its tab", () => {
+      useDocumentStore.setState({ files: threeFiles() });
+      useDocumentStore.getState().updateFileContent("refs.bib", "edited");
+      expect(useDocumentStore.getState().openFileIds).toEqual(["main.tex"]);
+    });
+
+    it("closing the preview tab returns to the last pinned tab", () => {
+      useDocumentStore.setState({
+        files: threeFiles(),
+        openFileIds: ["main.tex", "ch1.tex"],
+        activeFileId: "refs.bib",
+      });
+      useDocumentStore.getState().closeTab("refs.bib");
+      const state = useDocumentStore.getState();
+      expect(state.activeFileId).toBe("ch1.tex");
+      expect(state.openFileIds).toEqual(["main.tex", "ch1.tex"]);
+    });
+
+    it("the last pinned tab can close while a preview is showing", () => {
+      useDocumentStore.setState({
+        files: threeFiles(),
+        openFileIds: ["main.tex"],
+        activeFileId: "ch1.tex",
+      });
+      useDocumentStore.getState().closeTab("main.tex");
+      const state = useDocumentStore.getState();
+      expect(state.openFileIds).toEqual([]);
+      expect(state.activeFileId).toBe("ch1.tex");
+    });
+
+    it("addFile opens the new file as a tab", () => {
+      useDocumentStore.getState().addFile({
+        name: "refs.bib",
+        relativePath: "refs.bib",
+        absolutePath: "/project/refs.bib",
+        type: "bib",
+        content: "",
+      });
+      expect(useDocumentStore.getState().openFileIds).toEqual([
+        "main.tex",
+        "refs.bib",
+      ]);
+    });
+
+    it("closeTab of the active tab activates the tab to its right", () => {
+      useDocumentStore.setState({
+        files: threeFiles(),
+        openFileIds: ["main.tex", "ch1.tex", "refs.bib"],
+        activeFileId: "ch1.tex",
+      });
+      useDocumentStore.getState().closeTab("ch1.tex");
+      const state = useDocumentStore.getState();
+      expect(state.openFileIds).toEqual(["main.tex", "refs.bib"]);
+      expect(state.activeFileId).toBe("refs.bib");
+    });
+
+    it("closeTab of the rightmost active tab activates the new last tab", () => {
+      useDocumentStore.setState({
+        files: threeFiles(),
+        openFileIds: ["main.tex", "ch1.tex", "refs.bib"],
+        activeFileId: "refs.bib",
+      });
+      useDocumentStore.getState().closeTab("refs.bib");
+      const state = useDocumentStore.getState();
+      expect(state.openFileIds).toEqual(["main.tex", "ch1.tex"]);
+      expect(state.activeFileId).toBe("ch1.tex");
+    });
+
+    it("closeTab of an inactive tab keeps the active file", () => {
+      useDocumentStore.setState({
+        files: threeFiles(),
+        openFileIds: ["main.tex", "ch1.tex", "refs.bib"],
+        activeFileId: "main.tex",
+      });
+      useDocumentStore.getState().closeTab("refs.bib");
+      const state = useDocumentStore.getState();
+      expect(state.openFileIds).toEqual(["main.tex", "ch1.tex"]);
+      expect(state.activeFileId).toBe("main.tex");
+    });
+
+    it("closeTab keeps the last remaining tab open", () => {
+      useDocumentStore.getState().closeTab("main.tex");
+      const state = useDocumentStore.getState();
+      expect(state.openFileIds).toEqual(["main.tex"]);
+      expect(state.activeFileId).toBe("main.tex");
+    });
+
+    it("cycleTab wraps forward and backward", () => {
+      useDocumentStore.setState({
+        files: threeFiles(),
+        openFileIds: ["main.tex", "ch1.tex", "refs.bib"],
+        activeFileId: "refs.bib",
+      });
+      useDocumentStore.getState().cycleTab(1);
+      expect(useDocumentStore.getState().activeFileId).toBe("main.tex");
+      useDocumentStore.getState().cycleTab(-1);
+      expect(useDocumentStore.getState().activeFileId).toBe("refs.bib");
+    });
+
+    it("cycleTab includes the preview tab in the cycle", () => {
+      useDocumentStore.setState({
+        files: threeFiles(),
+        openFileIds: ["main.tex", "ch1.tex"],
+        activeFileId: "refs.bib", // preview
+      });
+      useDocumentStore.getState().cycleTab(1);
+      expect(useDocumentStore.getState().activeFileId).toBe("main.tex");
+      // refs.bib was a preview, so leaving it dropped it from the cycle
+      useDocumentStore.getState().cycleTab(-1);
+      expect(useDocumentStore.getState().activeFileId).toBe("ch1.tex");
+    });
+
+    it("deleteFile of the active tab activates a neighboring open tab", async () => {
+      useDocumentStore.setState({
+        files: threeFiles(),
+        openFileIds: ["main.tex", "ch1.tex", "refs.bib"],
+        activeFileId: "ch1.tex",
+      });
+      await useDocumentStore.getState().deleteFile("ch1.tex");
+      const state = useDocumentStore.getState();
+      expect(state.openFileIds).toEqual(["main.tex", "refs.bib"]);
+      expect(state.activeFileId).toBe("refs.bib");
+    });
+
+    it("deleteFile removes a non-active file's tab", async () => {
+      useDocumentStore.setState({
+        files: threeFiles(),
+        openFileIds: ["main.tex", "refs.bib"],
+        activeFileId: "main.tex",
+      });
+      await useDocumentStore.getState().deleteFile("refs.bib");
+      const state = useDocumentStore.getState();
+      expect(state.openFileIds).toEqual(["main.tex"]);
+      expect(state.activeFileId).toBe("main.tex");
+    });
+  });
+
+  describe("saveFile", () => {
+    beforeEach(() => {
+      vi.mocked(writeTextFile).mockClear();
+      vi.mocked(writeTextFile).mockResolvedValue(undefined);
+    });
+
+    it("saves a dirty file with content to disk", async () => {
+      useDocumentStore.setState({
+        files: [makeFile({ isDirty: true, content: "saved content" })],
+      });
+      await useDocumentStore.getState().saveFile("main.tex");
+      expect(writeTextFile).toHaveBeenCalledWith(
+        "/project/main.tex",
+        "saved content",
+      );
+      expect(useDocumentStore.getState().files[0].isDirty).toBe(false);
+    });
+
+    it("saves a dirty file with empty string content (regression: empty content is not falsy-skipped)", async () => {
+      useDocumentStore.setState({
+        files: [makeFile({ isDirty: true, content: "" })],
+      });
+      await useDocumentStore.getState().saveFile("main.tex");
+      expect(writeTextFile).toHaveBeenCalledWith("/project/main.tex", "");
+      expect(useDocumentStore.getState().files[0].isDirty).toBe(false);
+    });
+
+    it("skips saving when content is null", async () => {
+      useDocumentStore.setState({
+        files: [
+          makeFile({ isDirty: true, content: null as unknown as string }),
+        ],
+      });
+      await useDocumentStore.getState().saveFile("main.tex");
+      expect(writeTextFile).not.toHaveBeenCalled();
+    });
+
+    it("skips saving when file is not dirty", async () => {
+      useDocumentStore.setState({
+        files: [makeFile({ isDirty: false, content: "clean" })],
+      });
+      await useDocumentStore.getState().saveFile("main.tex");
+      expect(writeTextFile).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("saveAllFiles", () => {
+    beforeEach(() => {
+      vi.mocked(writeTextFile).mockClear();
+      vi.mocked(writeTextFile).mockResolvedValue(undefined);
+    });
+
+    it("saves all dirty files", async () => {
+      useDocumentStore.setState({
+        files: [
+          makeFile({ isDirty: true, content: "dirty content" }),
+          makeFile({
+            id: "clean.tex",
+            name: "clean.tex",
+            absolutePath: "/project/clean.tex",
+            relativePath: "clean.tex",
+            isDirty: false,
+            content: "clean",
+          }),
+        ],
+      });
+      await useDocumentStore.getState().saveAllFiles();
+      expect(writeTextFile).toHaveBeenCalledTimes(1);
+      expect(writeTextFile).toHaveBeenCalledWith(
+        "/project/main.tex",
+        "dirty content",
+      );
+    });
+
+    it("saves dirty files with empty string content (regression: empty string is not falsy-skipped)", async () => {
+      useDocumentStore.setState({
+        files: [
+          makeFile({ isDirty: true, content: "" }),
+          makeFile({
+            id: "slide.tex",
+            name: "slide.tex",
+            absolutePath: "/project/slide.tex",
+            relativePath: "slide.tex",
+            isDirty: true,
+            content: "",
+          }),
+        ],
+      });
+      await useDocumentStore.getState().saveAllFiles();
+      expect(writeTextFile).toHaveBeenCalledTimes(2);
+      expect(writeTextFile).toHaveBeenCalledWith("/project/main.tex", "");
+      expect(writeTextFile).toHaveBeenCalledWith("/project/slide.tex", "");
+      // Both should be marked clean
+      const files = useDocumentStore.getState().files;
+      expect(files.every((f) => !f.isDirty)).toBe(true);
+    });
+
+    it("skips files with null content even if dirty", async () => {
+      useDocumentStore.setState({
+        files: [
+          makeFile({ isDirty: true, content: null as unknown as string }),
+        ],
+      });
+      await useDocumentStore.getState().saveAllFiles();
+      expect(writeTextFile).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("setPdfData / setCompileError", () => {
+    it("setPdfData clears compile error", () => {
+      useDocumentStore.setState({ compileError: "some error" });
+      useDocumentStore.getState().setPdfData(new Uint8Array([1, 2, 3]));
+      const state = useDocumentStore.getState();
+      expect(getCurrentPdfBytes()).toEqual(new Uint8Array([1, 2, 3]));
+      expect(state.compileError).toBeNull();
+    });
+
+    it("setCompileError stores the error string (regression: Tauri string errors must be preserved)", () => {
+      useDocumentStore
+        .getState()
+        .setCompileError("Compilation failed\n\n! Undefined control sequence.");
+      expect(useDocumentStore.getState().compileError).toBe(
+        "Compilation failed\n\n! Undefined control sequence.",
+      );
+    });
+  });
+});

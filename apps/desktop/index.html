@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <title>Velum | Scholarly LaTeX Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      #loading-screen {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: #FAF8F5;
+        color: #1A1D20;
+        z-index: 9999;
+        font-family: 'Geist', system-ui, sans-serif;
+        transition: opacity 0.3s ease;
+      }
+      @media (prefers-color-scheme: dark) {
+        #loading-screen { background: #131518; color: #E8E5DF; }
+        #loading-spinner { border-color: rgba(255,255,255,0.12); border-top-color: #C47335; }
+      }
+      #loading-spinner {
+        width: 34px;
+        height: 34px;
+        border: 2.5px solid rgba(0,0,0,0.08);
+        border-top-color: #9B4B18;
+        border-radius: 50%;
+        animation: spin 0.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+        margin-bottom: 18px;
+      }
+      #loading-screen h1 {
+        font-family: 'Newsreader', Georgia, serif;
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        margin: 0 0 4px 0;
+      }
+      #loading-screen p {
+        font-size: 13px;
+        color: #7A766F;
+        margin: 0;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body class="h-full antialiased">
+    <div id="loading-screen">
+      <div id="loading-spinner"></div>
+      <h1>Velum</h1>
+      <p>Opening scholarly studio...</p>
+    </div>
+    <div id="root" class="h-full"></div>
+    <script src="/tauri-shim.js"></script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,366 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release, for example v1.2.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-release:
+    name: Prepare GitHub release
+    runs-on: ubuntu-latest
+
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Generate notes from the changelog
+        run: node scripts/release-notes.mjs "$RELEASE_TAG" > release-notes.md
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            if [ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" != "true" ]; then
+              echo "Error: release $RELEASE_TAG is already public; refusing to replace its assets"
+              exit 1
+            fi
+
+            echo "Draft release $RELEASE_TAG already exists; keeping its existing notes."
+            exit 0
+          fi
+
+          prerelease_args=()
+          case "$RELEASE_TAG" in
+            *-alpha*|*-beta*|*-rc*) prerelease_args+=(--prerelease) ;;
+          esac
+
+          gh release create "$RELEASE_TAG" \
+            --verify-tag \
+            --draft \
+            --title "Opal $RELEASE_TAG" \
+            --notes-file release-notes.md \
+            "${prerelease_args[@]}"
+
+  build-and-stage:
+    name: ${{ matrix.name }}
+    needs: prepare-release
+    runs-on: ${{ matrix.os }}
+
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux-x86_64
+            os: ubuntu-22.04
+            rust-target: ""
+            vcpkg-triplet: x64-linux
+            tauri-args: "--bundles deb,appimage"
+            audit: linux
+
+          - name: macOS-ARM64
+            os: macos-15
+            rust-target: aarch64-apple-darwin
+            vcpkg-triplet: arm64-osx
+            tauri-args: "--target aarch64-apple-darwin --bundles app,dmg"
+            audit: macos
+            macos-arch: arm64
+            macos-min: "11.0"
+
+          - name: macOS-x86_64
+            os: macos-15-intel
+            rust-target: x86_64-apple-darwin
+            vcpkg-triplet: x64-osx
+            tauri-args: "--target x86_64-apple-darwin --bundles app,dmg"
+            audit: macos
+            macos-arch: x86_64
+            macos-min: "11.0"
+
+          - name: Windows-x86_64
+            os: windows-latest
+            rust-target: ""
+            vcpkg-triplet: x64-windows-static-md
+            tauri-args: ""
+            audit: windows
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Rust stable
+        if: matrix.rust-target == ''
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust stable with target
+        if: matrix.rust-target != ''
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Cache Rust build artifacts
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libssl-dev \
+            autoconf autoconf-archive automake libtool
+
+      - name: Install static Tectonic dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          vcpkg_executable=$(command -v vcpkg || true)
+          if [ -z "$vcpkg_executable" ]; then
+            echo "Error: the hosted runner does not provide a usable vcpkg installation"
+            exit 1
+          fi
+
+          vcpkg_executable=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$vcpkg_executable")
+          vcpkg_root=${VCPKG_INSTALLATION_ROOT:-$(dirname "$vcpkg_executable")}
+
+          "$vcpkg_executable" install \
+            'harfbuzz[graphite2]' freetype icu fontconfig \
+            --triplet "${{ matrix.vcpkg-triplet }}"
+
+          # Resolve Tectonic's native deps (ICU/HarfBuzz/Graphite2/FreeType/
+          # Fontconfig) through pkg-config against the vcpkg tree rather than the
+          # vcpkg backend. The vcpkg backend fails to emit the full transitive
+          # closure for the static x64-linux triplet (missing graphite2 and the
+          # ICU data/i18n libs -> undefined symbols at link time), whereas the
+          # vcpkg .pc files carry the complete Requires chain. The vcpkg lib dir
+          # ships only static .a archives, so these link statically for a
+          # portable package, while GTK/WebKit still resolve dynamically from the
+          # default system pkgconfig paths. Do NOT set PKG_CONFIG_ALL_STATIC: it
+          # forces GTK/WebKit static too and drags in an unavailable -lsystemd.
+          echo "TECTONIC_DEP_BACKEND=pkg-config" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$vcpkg_root/installed/${{ matrix.vcpkg-triplet }}/lib/pkgconfig" >> "$GITHUB_ENV"
+          # Recent vcpkg ICU headers require C++17; tectonic_xetex_layout
+          # defaults to -std=c++14, and cc-rs appends CXXFLAGS last so this wins.
+          echo "CXXFLAGS=-std=c++17" >> "$GITHUB_ENV"
+
+      - name: Install static Tectonic dependencies (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # Pin the deployment target before vcpkg compiles the native deps so
+          # ICU/HarfBuzz/etc target the same minimum as the app. GitHub's macOS
+          # runners default much higher, which would raise the app's minimum.
+          export MACOSX_DEPLOYMENT_TARGET=${{ matrix.macos-min }}
+
+          # pkg-config and the autotools vcpkg's fontconfig/gperf ports need are
+          # not guaranteed on the runner; Rust/Node/vcpkg already are.
+          brew install pkg-config autoconf autoconf-archive automake libtool
+
+          vcpkg_executable=$(command -v vcpkg || true)
+          if [ -z "$vcpkg_executable" ]; then
+            echo "Error: the hosted runner does not provide a usable vcpkg installation"
+            exit 1
+          fi
+          vcpkg_root=${VCPKG_INSTALLATION_ROOT:-$(dirname "$(readlink -f "$vcpkg_executable")")}
+
+          "$vcpkg_executable" install \
+            'harfbuzz[graphite2]' freetype icu fontconfig \
+            --triplet "${{ matrix.vcpkg-triplet }}"
+
+          # Same static-portability strategy as Linux: link Tectonic's native
+          # deps statically from the vcpkg tree via pkg-config (the vcpkg backend
+          # under-emits the closure), so the .app carries no Homebrew/absolute
+          # dylib paths and runs on a clean Mac. macOS system frameworks stay
+          # dynamic. This is an UNSIGNED build -- no Apple Developer ID or
+          # notarization -- so users must clear the Gatekeeper quarantine flag
+          # (documented on the website).
+          echo "MACOSX_DEPLOYMENT_TARGET=${{ matrix.macos-min }}" >> "$GITHUB_ENV"
+          echo "TECTONIC_DEP_BACKEND=pkg-config" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$vcpkg_root/installed/${{ matrix.vcpkg-triplet }}/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "CXXFLAGS=-std=c++17" >> "$GITHUB_ENV"
+
+      - name: Install Windows dependencies
+        if: runner.os == 'Windows'
+        run: |
+          vcpkg integrate install
+          vcpkg install harfbuzz[graphite2] freetype icu fontconfig --triplet x64-windows-static-md
+          echo "TECTONIC_DEP_BACKEND=vcpkg" >> "$env:GITHUB_ENV"
+          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> "$env:GITHUB_ENV"
+          echo "VCPKG_DEFAULT_TRIPLET=x64-windows-static-md" >> "$env:GITHUB_ENV"
+          echo "VCPKGRS_TRIPLET=x64-windows-static-md" >> "$env:GITHUB_ENV"
+          echo "CXXFLAGS=/std:c++17" >> "$env:GITHUB_ENV"
+
+      # WiX requires a numeric-only pre-release identifier, so versions like
+      # 1.4.2-rc.1 fail the msi target. Override the MSI-only version via a
+      # platform config overlay (major.minor.patch.build); the app, NSIS
+      # installer, and updater JSON keep the full semver version.
+      - name: Normalize MSI version for prerelease builds
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          if ($version -match '^(\d+\.\d+\.\d+)$') {
+            Write-Host "Stable version $version needs no MSI override"
+            exit 0
+          }
+          if ($version -notmatch '^(\d+\.\d+\.\d+)-(?:alpha|beta|rc)\.?(\d+)$') {
+            throw "Cannot derive an MSI version from '$version'"
+          }
+          $msiVersion = "$($Matches[1]).$($Matches[2])"
+          $overlay = @{ bundle = @{ windows = @{ wix = @{ version = $msiVersion } } } } |
+            ConvertTo-Json -Depth 5
+          Set-Content -Path apps/desktop/src-tauri/tauri.windows.conf.json -Value $overlay
+          Write-Host "MSI version overridden to $msiVersion for app version $version"
+
+      - name: Build and stage Tauri release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: "Opal ${{ env.RELEASE_TAG }}"
+          releaseDraft: true
+          prerelease: ${{ contains(env.RELEASE_TAG, '-rc') || contains(env.RELEASE_TAG, '-beta') || contains(env.RELEASE_TAG, '-alpha') }}
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
+          updaterJsonPreferNsis: true
+          releaseAssetNamePattern: "[name]_[version]_[platform]_[arch][setup][ext]"
+          args: ${{ matrix.tauri-args }}
+
+      - name: Normalize Debian prerelease version and replace staged package
+        if: matrix.audit == 'linux'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          app_version=$(node -p "require('./package.json').version")
+          bash scripts/normalize-debian-prerelease.sh "$app_version"
+
+          deb_path=$(find apps/desktop/src-tauri/target/release/bundle/deb \
+            -maxdepth 1 -name '*.deb' -type f -print -quit)
+          staged_name="Opal_${app_version}_linux_amd64.deb"
+          staged_path="$RUNNER_TEMP/$staged_name"
+          cp "$deb_path" "$staged_path"
+
+          gh release upload "$RELEASE_TAG" "$staged_path" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+          gh release delete-asset "$RELEASE_TAG" "${staged_name}.sig" \
+            --repo "$GITHUB_REPOSITORY" \
+            --yes || true
+
+      - name: Audit Linux application and packages
+        if: matrix.audit == 'linux'
+        shell: bash
+        run: bash scripts/audit-linux-bundle.sh
+
+      - name: Audit macOS bundle (unsigned)
+        if: matrix.audit == 'macos'
+        shell: bash
+        run: |
+          bash scripts/audit-macos-bundle.sh \
+            "${{ matrix.rust-target }}" \
+            "${{ matrix.macos-arch }}" \
+            "${{ matrix.macos-min }}" \
+            unsigned
+
+      - name: Audit Windows installer outputs
+        if: matrix.audit == 'windows'
+        shell: pwsh
+        run: |
+          $bundleRoot = "apps/desktop/src-tauri/target/release/bundle"
+          $installers = @(
+            Get-ChildItem -LiteralPath $bundleRoot -Recurse -File |
+              Where-Object { $_.Extension -in @('.exe', '.msi') }
+          )
+          $installers | Select-Object FullName, Length
+          if (-not ($installers.Extension -contains '.exe')) {
+            throw 'NSIS installer was not generated'
+          }
+          if (-not ($installers.Extension -contains '.msi')) {
+            throw 'MSI installer was not generated'
+          }
+
+  linux-smoke:
+    name: Linux packages on ${{ matrix.os }}
+    needs: build-and-stage
+    runs-on: ${{ matrix.os }}
+
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Download staged Linux packages
+        run: |
+          mkdir -p artifacts
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.AppImage' \
+            --pattern '*.deb' \
+            --dir artifacts
+
+      - name: Install clean-machine test harness
+        run: |
+          sudo apt-get update
+          # dbus/xvfb drive the headless GUI launch. The GL/Mesa runtime
+          # (libEGL.so.1 etc.) is the graphics stack every real Linux desktop
+          # provides but a headless runner does not; the AppImage deliberately
+          # does not bundle it (drivers must match the host GPU), so without
+          # this the app fails to load libEGL.so.1 at startup. LIBGL_ALWAYS_
+          # SOFTWARE=1 in the smoke script uses the mesa swrast driver.
+          sudo apt-get install -y \
+            dbus-x11 file xauth xvfb \
+            libegl1 libgl1 libgl1-mesa-dri libglx-mesa0 libgbm1
+
+      - name: Compile and launch both package formats
+        run: bash scripts/smoke-test-linux-packages.sh artifacts

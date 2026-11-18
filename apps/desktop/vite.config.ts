@@ -139,6 +139,99 @@ function tectonicCompilerPlugin() {
           }
         });
       });
+
+      // ── DYNAMIC OLLAMA BRIDGE PROXY ──
+      // Strictly connects to the exact user-specified endpoint.
+      // Returns 502 if that exact IP/port is unreachable. Never falls back to hardcoded defaults.
+      server.middlewares.use("/api/ollama-bridge", async (req: any, res: any) => {
+        try {
+          const parsedReqUrl = new URL(req.url, "http://localhost:1420");
+          const targetEndpoint = req.headers["x-ollama-endpoint"] || parsedReqUrl.searchParams.get("endpoint");
+
+          if (!targetEndpoint || typeof targetEndpoint !== "string") {
+            res.statusCode = 400;
+            res.setHeader("Content-Type", "application/json");
+            return res.end(JSON.stringify({ error: "Missing required Ollama endpoint" }));
+          }
+
+          let parsedTarget: URL;
+          try {
+            const rawTarget = targetEndpoint.trim();
+            parsedTarget = new URL(rawTarget.startsWith("http://") || rawTarget.startsWith("https://") ? rawTarget : `http://${rawTarget}`);
+            if (parsedTarget.port) {
+              const portNum = Number(parsedTarget.port);
+              if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+                res.statusCode = 400;
+                res.setHeader("Content-Type", "application/json");
+                return res.end(JSON.stringify({ error: `Invalid port ${parsedTarget.port}. Must be 1-65535.` }));
+              }
+            }
+          } catch (e: any) {
+            res.statusCode = 400;
+            res.setHeader("Content-Type", "application/json");
+            return res.end(JSON.stringify({ error: `Invalid URL: ${targetEndpoint}` }));
+          }
+
+          const subPath = parsedReqUrl.pathname.replace(/^\/api\/ollama-bridge/, "") || "/api/tags";
+          const destUrl = `${parsedTarget.origin}${subPath}`;
+
+          const chunks: Buffer[] = [];
+          req.on("data", (chunk: Buffer) => chunks.push(chunk));
+          req.on("end", async () => {
+            const bodyData = chunks.length > 0 ? Buffer.concat(chunks) : undefined;
+            const httpModule = destUrl.startsWith("https:") ? await import("node:https") : await import("node:http");
+
+            const fwdHeaders: Record<string, any> = {
+              ...req.headers,
+              host: parsedTarget.host,
+            };
+            delete fwdHeaders["x-ollama-endpoint"];
+            if (bodyData) {
+              fwdHeaders["content-length"] = bodyData.length;
+            } else {
+              delete fwdHeaders["content-length"];
+            }
+
+            const proxyReq = httpModule.request(
+              destUrl,
+              {
+                method: req.method,
+                headers: fwdHeaders,
+                timeout: 30000,
+              },
+              (proxyRes) => {
+                res.statusCode = proxyRes.statusCode || 200;
+                for (const [k, v] of Object.entries(proxyRes.headers)) {
+                  if (v) res.setHeader(k, v);
+                }
+                proxyRes.pipe(res);
+              },
+            );
+
+            proxyReq.on("error", (err: any) => {
+              res.statusCode = 502;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: `Could not connect to Ollama at ${destUrl}: ${err.message}` }));
+            });
+
+            proxyReq.on("timeout", () => {
+              proxyReq.destroy();
+              res.statusCode = 504;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: `Connection to ${destUrl} timed out.` }));
+            });
+
+            if (bodyData) {
+              proxyReq.write(bodyData);
+            }
+            proxyReq.end();
+          });
+        } catch (e: any) {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ error: e.message }));
+        }
+      });
     },
   };
 }
@@ -164,13 +257,6 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     host: host || false,
-    proxy: {
-      "/api/ollama": {
-        target: "http://127.0.0.1:11434",
-        changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/api\/ollama/, ""),
-      },
-    },
     hmr: host
       ? {
           protocol: "ws",

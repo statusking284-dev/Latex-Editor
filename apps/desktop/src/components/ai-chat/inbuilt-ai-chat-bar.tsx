@@ -162,78 +162,105 @@ const PRESET_PROMPTS = [
 ];
 
 /**
- * Fetch models ONLY from the exact IP/endpoint entered by the user.
- * Does NOT auto-fetch on mount. Strictly validates and queries the user's IP.
+ * Strict URL and Port Validation for Ollama Endpoint.
+ * Rejects invalid protocols, garbled hosts, and out-of-range ports.
  */
-async function fetchRealOllamaModels(endpoint: string): Promise<{ connected: boolean; models: string[]; error?: string }> {
-  const trimmed = (endpoint || "").trim();
+function parseAndValidateEndpoint(raw: string): { valid: boolean; endpoint: string; error?: string } {
+  const trimmed = (raw || "").trim();
   if (!trimmed) {
-    return { connected: false, models: [], error: "Please enter the Ollama Server IP address and port (e.g. http://127.0.0.1:11434)." };
+    return { valid: false, endpoint: "", error: "Please enter an Ollama IP address and port (e.g. http://127.0.0.1:11434)." };
   }
+  const withProto = trimmed.startsWith("http://") || trimmed.startsWith("https://")
+    ? trimmed
+    : `http://${trimmed}`;
 
-  const cleanEndpoint = trimmed.startsWith("http://") || trimmed.startsWith("https://")
-    ? trimmed.replace(/\/+$/, "")
-    : `http://${trimmed}`.replace(/\/+$/, "");
-
-  const isLocal = cleanEndpoint.includes("127.0.0.1") || cleanEndpoint.includes("localhost");
-  // For local IP on dev web server, include proxy fallback in case of direct CORS blockage
-  const urls = isLocal
-    ? [`${cleanEndpoint}/api/tags`, "/api/ollama/api/tags"]
-    : [`${cleanEndpoint}/api/tags`];
-
-  let lastErrorMsg = "";
-  for (const url of urls) {
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(4500) });
-      if (res.ok) {
-        const data = await res.json();
-        const rawModels: string[] = (data.models || []).map((m: any) => m.name);
-
-        // Filter out non-compatible models (embeddings, vision/VL models)
-        const compatible = rawModels.filter((name: string) => {
-          if (!name) return false;
-          const lower = name.toLowerCase();
-          if (lower.includes("embed")) return false;
-          if (lower.includes("vl") || lower.includes("vision")) return false;
-          return true;
-        });
-
-        // Priority sort: Most responsive, CPU-friendly models first
-        compatible.sort((a, b) => {
-          const score = (m: string) => {
-            const lower = m.toLowerCase();
-            if (lower.includes("1.5b")) return 1;
-            if (lower.includes("1b")) return 2;
-            if (lower.includes("3b")) return 3;
-            if (lower.includes("0.5b")) return 4;
-            return 10;
-          };
-          return score(a) - score(b);
-        });
-
-        if (compatible.length === 0) {
-          return { connected: true, models: [], error: `Connected to ${cleanEndpoint}, but no compatible text generation models were found.` };
-        }
-
-        return { connected: true, models: compatible };
-      } else {
-        lastErrorMsg = `Ollama server at ${cleanEndpoint} returned HTTP ${res.status}`;
-      }
-    } catch (e: any) {
-      lastErrorMsg = e.message || "Connection refused";
+  try {
+    const url = new URL(withProto);
+    if (!url.hostname) {
+      return { valid: false, endpoint: "", error: "Invalid IP address or hostname." };
     }
+    if (url.port) {
+      const portNum = Number(url.port);
+      if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+        return { valid: false, endpoint: "", error: `Invalid port "${url.port}". Port number must be between 1 and 65535.` };
+      }
+    }
+    return { valid: true, endpoint: url.origin };
+  } catch {
+    return { valid: false, endpoint: "", error: `Invalid URL format: "${trimmed}". Example: http://127.0.0.1:11434` };
+  }
+}
+
+/**
+ * Fetch models ONLY from the exact IP/endpoint entered by the user.
+ * Routes strictly through the dynamic bridge to the user-specified target.
+ * Never falls back to hardcoded localhost or default ports.
+ */
+async function fetchRealOllamaModels(rawEndpoint: string): Promise<{ connected: boolean; models: string[]; error?: string }> {
+  const validation = parseAndValidateEndpoint(rawEndpoint);
+  if (!validation.valid) {
+    return { connected: false, models: [], error: validation.error };
   }
 
-  return {
-    connected: false,
-    models: [],
-    error: `Could not connect to "${cleanEndpoint}". Please check the IP address, port, and ensure Ollama is running. (${lastErrorMsg})`,
-  };
+  const endpoint = validation.endpoint;
+  const bridgeUrl = `/api/ollama-bridge/api/tags?endpoint=${encodeURIComponent(endpoint)}`;
+
+  try {
+    const res = await fetch(bridgeUrl, {
+      signal: AbortSignal.timeout(6000),
+      headers: { "x-ollama-endpoint": endpoint },
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        connected: false,
+        models: [],
+        error: data.error || `Could not connect to ${endpoint} (HTTP ${res.status}).`,
+      };
+    }
+
+    const rawModels: string[] = (data.models || []).map((m: any) => m.name);
+
+    // Filter out non-compatible models (embeddings, vision/VL models)
+    const compatible = rawModels.filter((name: string) => {
+      if (!name) return false;
+      const lower = name.toLowerCase();
+      if (lower.includes("embed")) return false;
+      if (lower.includes("vl") || lower.includes("vision")) return false;
+      return true;
+    });
+
+    // Priority sort: Most responsive, CPU-friendly models first
+    compatible.sort((a, b) => {
+      const score = (m: string) => {
+        const lower = m.toLowerCase();
+        if (lower.includes("1.5b")) return 1;
+        if (lower.includes("1b")) return 2;
+        if (lower.includes("3b")) return 3;
+        if (lower.includes("0.5b")) return 4;
+        return 10;
+      };
+      return score(a) - score(b);
+    });
+
+    if (compatible.length === 0) {
+      return { connected: true, models: [], error: `Connected to ${endpoint}, but no compatible text generation models were found.` };
+    }
+
+    return { connected: true, models: compatible };
+  } catch (err: any) {
+    return {
+      connected: false,
+      models: [],
+      error: `Connection to "${endpoint}" failed (${err.message || "Network error"}).`,
+    };
+  }
 }
 
 /**
  * Execute prompt with local Ollama model to modify LaTeX source code.
- * Uses the exact IP endpoint configured by the user.
+ * Routes strictly to the user's validated endpoint via dynamic bridge.
  */
 async function callOllamaGenerate(
   model: string,
@@ -241,6 +268,14 @@ async function callOllamaGenerate(
   currentContent: string,
   endpoint = "http://127.0.0.1:11434",
 ): Promise<string> {
+  const validation = parseAndValidateEndpoint(endpoint);
+  if (!validation.valid) {
+    throw new Error(validation.error || "Invalid Ollama endpoint");
+  }
+
+  const cleanEndpoint = validation.endpoint;
+  const bridgeUrl = `/api/ollama-bridge/api/generate?endpoint=${encodeURIComponent(cleanEndpoint)}`;
+
   const systemPrompt = `You are a precision LaTeX typesetter and document engineer.
 You are given an existing LaTeX document and an instruction from the user.
 YOUR TASK: Revise the LaTeX document according to the user's instructions.
@@ -262,33 +297,22 @@ CRITICAL OUTPUT RULES:
     },
   };
 
-  const cleanEndpoint = endpoint.trim().startsWith("http://") || endpoint.trim().startsWith("https://")
-    ? endpoint.trim().replace(/\/+$/, "")
-    : `http://${endpoint.trim()}`.replace(/\/+$/, "");
+  const res = await fetch(bridgeUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-ollama-endpoint": cleanEndpoint,
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(90000), // 90s timeout to support laptop CPU
+  });
 
-  const isLocal = cleanEndpoint.includes("127.0.0.1") || cleanEndpoint.includes("localhost");
-  const urls = isLocal
-    ? [`${cleanEndpoint}/api/generate`, "/api/ollama/api/generate"]
-    : [`${cleanEndpoint}/api/generate`];
-
-  let lastError: any = null;
-  for (const url of urls) {
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(90000), // 90s timeout to support laptop CPU
-      });
-      if (res.ok) {
-        const json = await res.json();
-        return json.response || "";
-      }
-    } catch (e) {
-      lastError = e;
-    }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || `Ollama at ${cleanEndpoint} returned HTTP ${res.status}`);
   }
-  throw lastError || new Error(`Failed to connect to Ollama at ${cleanEndpoint}. Please ensure Ollama is running.`);
+
+  return data.response || "";
 }
 
 /**
@@ -395,24 +419,21 @@ export function InbuiltAiChatBar() {
 
   // Test Ollama ONLY when user clicks the button with their entered IP
   const handleTestOllama = async () => {
-    const rawUrl = ollamaUrl.trim();
-    if (!rawUrl) {
+    const validation = parseAndValidateEndpoint(ollamaUrl);
+    if (!validation.valid) {
       setOllamaResult({
         ok: false,
-        message: "Please enter your Ollama Server IP address and port (e.g. http://127.0.0.1:11434).",
+        message: validation.error || "Please enter a valid IP address and port.",
       });
       setOllamaModels([]);
       setSelectedOllamaModel("");
       return;
     }
 
-    const cleanEndpoint = rawUrl.startsWith("http://") || rawUrl.startsWith("https://")
-      ? rawUrl.replace(/\/+$/, "")
-      : `http://${rawUrl}`.replace(/\/+$/, "");
-
+    const cleanEndpoint = validation.endpoint;
     setOllamaTesting(true);
     setOllamaResult(null);
-    setOllamaModels([]); // Do not show models until this IP successfully connects!
+    setOllamaModels([]); // Clear models
     setSelectedOllamaModel("");
 
     try {
@@ -422,7 +443,7 @@ export function InbuiltAiChatBar() {
         const targetModel = res.models[0];
         setSelectedOllamaModel(targetModel);
 
-        // Perform a quick live test ping to verify generation on this exact IP
+        // Perform a quick live test ping to verify generation strictly on this exact IP
         const testPingStart = performance.now();
         const pingBody = {
           model: targetModel,
@@ -431,27 +452,23 @@ export function InbuiltAiChatBar() {
           options: { num_predict: 1, num_ctx: 512 },
         };
 
-        const isLocal = cleanEndpoint.includes("127.0.0.1") || cleanEndpoint.includes("localhost");
-        const pingUrls = isLocal
-          ? [`${cleanEndpoint}/api/generate`, "/api/ollama/api/generate"]
-          : [`${cleanEndpoint}/api/generate`];
-
+        const bridgePingUrl = `/api/ollama-bridge/api/generate?endpoint=${encodeURIComponent(cleanEndpoint)}`;
         let pingOk = false;
-        for (const pUrl of pingUrls) {
-          try {
-            const pRes = await fetch(pUrl, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(pingBody),
-              signal: AbortSignal.timeout(5000),
-            });
-            if (pRes.ok) {
-              pingOk = true;
-              break;
-            }
-          } catch {
-            // next URL
+        try {
+          const pRes = await fetch(bridgePingUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-ollama-endpoint": cleanEndpoint,
+            },
+            body: JSON.stringify(pingBody),
+            signal: AbortSignal.timeout(6000),
+          });
+          if (pRes.ok) {
+            pingOk = true;
           }
+        } catch {
+          // ping failed
         }
 
         const elapsed = Math.round(performance.now() - testPingStart);

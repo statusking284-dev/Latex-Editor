@@ -84,6 +84,7 @@ interface ChatMessage {
   diffSummary?: string;
   previousContent?: string;
   appliedContent?: string;
+  reviewState?: "pending" | "accepted" | "rejected";
 }
 
 type ProviderId = "ollama" | "openai" | "anthropic" | "gemini" | "deepseek";
@@ -276,13 +277,13 @@ async function callOllamaGenerate(
   const cleanEndpoint = validation.endpoint;
   const bridgeUrl = `/api/ollama-bridge/api/generate?endpoint=${encodeURIComponent(cleanEndpoint)}`;
 
-  const systemPrompt = `You are a precision LaTeX typesetter and document engineer.
+  const systemPrompt = `You are a precision LaTeX document typesetter and code copilot.
 You are given an existing LaTeX document and an instruction from the user.
-YOUR TASK: Revise the LaTeX document according to the user's instructions.
+YOUR TASK: Apply and integrate the user's request directly into the LaTeX document code (e.g. adding or updating sections, tables, equations, text, authors, title, packages).
 CRITICAL OUTPUT RULES:
-1. Output ONLY the updated LaTeX document code.
-2. Wrap the output in \`\`\`latex ... \`\`\` code block.
-3. NEVER output conversational commentary, explanations, or filler words.`;
+1. Always modify the LaTeX document to fulfill the prompt.
+2. Return ONLY the complete, updated LaTeX document wrapped in \`\`\`latex ... \`\`\` code block.
+3. NEVER output conversational filler words or explanations outside the LaTeX code.`;
 
   const userQuery = `Current LaTeX Document:\n\`\`\`latex\n${currentContent}\n\`\`\`\n\nUser Instruction:\n${prompt}`;
 
@@ -615,7 +616,13 @@ export function InbuiltAiChatBar() {
         // Clean leading/trailing standalone "latex" or "tex" words from model output
         newContent = newContent.replace(/^(?:latex|tex)\s+/i, "").replace(/\s+(?:latex|tex)$/i, "").trim();
 
-        // Apply immediately to screen editor and trigger recompile!
+        // Calculate diff metrics
+        const prevLines = currentContent.split("\n").length;
+        const newLines = newContent.split("\n").length;
+        const lineDiff = newLines - prevLines;
+        const diffText = lineDiff > 0 ? `+${lineDiff} lines` : lineDiff < 0 ? `${lineDiff} lines` : "Modified in-place";
+
+        // Apply immediately to screen editor and trigger recompile so user sees the change!
         window.dispatchEvent(
           new CustomEvent("apply-editor-content", {
             detail: { content: newContent, recompile: true },
@@ -625,11 +632,12 @@ export function InbuiltAiChatBar() {
         const asstMsg: ChatMessage = {
           id: `asst-${Date.now()}`,
           sender: "assistant",
-          text: `✨ Done! Updated LaTeX document based on your prompt.`,
+          text: `Proposed changes applied for review: "${text}"`,
           timestamp: new Date(),
-          diffSummary: `Modified via ${connectedModel}`,
+          diffSummary: `${diffText} • ${connectedModel}`,
           previousContent: currentContent,
           appliedContent: newContent,
+          reviewState: "pending",
         };
         setMessages((prev) => [...prev, asstMsg]);
       } catch (err: any) {
@@ -649,6 +657,36 @@ export function InbuiltAiChatBar() {
     },
     [promptInput, isProcessing, connectedModel, connectedProvider, ollamaUrl, apiKeys, cloudModels],
   );
+
+  const handleAcceptChange = (messageId: string) => {
+    setMessages((prev) =>
+      prev.map((msg) => (msg.id === messageId ? { ...msg, reviewState: "accepted" } : msg)),
+    );
+  };
+
+  const handleRejectChange = (messageId: string, prevContent?: string) => {
+    if (prevContent) {
+      window.dispatchEvent(
+        new CustomEvent("apply-editor-content", {
+          detail: { content: prevContent, recompile: true },
+        }),
+      );
+    }
+    setMessages((prev) =>
+      prev.map((msg) => (msg.id === messageId ? { ...msg, reviewState: "rejected" } : msg)),
+    );
+  };
+
+  const handleReApplyChange = (messageId: string, appliedContent: string) => {
+    window.dispatchEvent(
+      new CustomEvent("apply-editor-content", {
+        detail: { content: appliedContent, recompile: true },
+      }),
+    );
+    setMessages((prev) =>
+      prev.map((msg) => (msg.id === messageId ? { ...msg, reviewState: "accepted" } : msg)),
+    );
+  };
 
   const handleRevert = (prev?: string) => {
     if (!prev) return;
@@ -1145,19 +1183,79 @@ export function InbuiltAiChatBar() {
                   </div>
                   <div className="whitespace-pre-wrap">{m.text}</div>
 
-                  {m.diffSummary && (
-                    <div className="mt-2 flex items-center justify-between border-t border-border/50 pt-1.5 text-[11px]">
-                      <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
-                        <CheckCircle2Icon className="size-3" /> Document Updated & Compiled
-                      </span>
-                      {m.previousContent && (
-                        <button
-                          type="button"
-                          onClick={() => handleRevert(m.previousContent)}
-                          className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                        >
-                          <RotateCcwIcon className="size-2.5" /> Revert
-                        </button>
+                  {m.appliedContent && (
+                    <div className="mt-2.5 rounded-xl border border-border/70 bg-background/60 p-2.5 space-y-2 select-none shadow-sm">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-semibold flex items-center gap-1.5">
+                          {m.reviewState === "accepted" ? (
+                            <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                              <CheckCircle2Icon className="size-3.5" /> Changes Accepted
+                            </span>
+                          ) : m.reviewState === "rejected" ? (
+                            <span className="flex items-center gap-1 text-rose-500">
+                              <XIcon className="size-3.5" /> Changes Rejected
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1 text-amber-500 dark:text-amber-400">
+                              <SparklesIcon className="size-3.5 animate-pulse" /> Review Proposed Changes
+                            </span>
+                          )}
+                        </span>
+                        {m.diffSummary && (
+                          <span className="text-[10px] text-muted-foreground font-mono bg-muted/60 px-1.5 py-0.5 rounded">
+                            {m.diffSummary}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Pending Review: Prominent Accept & Reject Buttons */}
+                      {m.reviewState === "pending" && (
+                        <div className="flex items-center gap-2 pt-1.5 border-t border-border/40">
+                          <button
+                            type="button"
+                            onClick={() => handleAcceptChange(m.id)}
+                            className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white py-1.5 px-3 text-xs font-semibold shadow transition-all active:scale-[0.98]"
+                          >
+                            <CheckIcon className="size-3.5 stroke-[2.5]" />
+                            Accept
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRejectChange(m.id, m.previousContent)}
+                            className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-destructive/40 bg-destructive/10 hover:bg-destructive/20 text-destructive py-1.5 px-3 text-xs font-semibold transition-all active:scale-[0.98]"
+                          >
+                            <XIcon className="size-3.5 stroke-[2.5]" />
+                            Reject
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Accepted State: Shows confirmation with Undo option */}
+                      {m.reviewState === "accepted" && m.previousContent && (
+                        <div className="flex items-center justify-between pt-1 border-t border-border/40 text-[10px]">
+                          <span className="text-muted-foreground">Applied to active LaTeX document</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRejectChange(m.id, m.previousContent)}
+                            className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline transition-colors font-medium"
+                          >
+                            <RotateCcwIcon className="size-2.5" /> Undo / Revert
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Rejected State: Shows restoration with Re-apply option */}
+                      {m.reviewState === "rejected" && m.appliedContent && (
+                        <div className="flex items-center justify-between pt-1 border-t border-border/40 text-[10px]">
+                          <span className="text-muted-foreground">Original code restored</span>
+                          <button
+                            type="button"
+                            onClick={() => handleReApplyChange(m.id, m.appliedContent!)}
+                            className="inline-flex items-center gap-1 text-primary hover:underline transition-colors font-medium"
+                          >
+                            Re-apply changes
+                          </button>
+                        </div>
                       )}
                     </div>
                   )}

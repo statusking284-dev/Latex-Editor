@@ -164,6 +164,13 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     host: host || false,
+    proxy: {
+      "/api/ollama": {
+        target: "http://127.0.0.1:11434",
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/api\/ollama/, ""),
+      },
+    },
     hmr: host
       ? {
           protocol: "ws",

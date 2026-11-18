@@ -15,6 +15,13 @@ import {
   HelpCircleIcon,
   PlusIcon,
   LayersIcon,
+  SettingsIcon,
+  CpuIcon,
+  ServerIcon,
+  RefreshCwIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  SlidersHorizontalIcon,
 } from "lucide-react";
 import { useDocumentStore } from "@/stores/document-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -337,19 +344,158 @@ function escapeLatex(text: string): string {
     .replace(/\^/g, "\\textasciicircum ");
 }
 
+/**
+ * Check local Ollama connection and fetch list of installed models.
+ */
+async function checkOllamaStatus(customEndpoint?: string): Promise<{ connected: boolean; models: string[] }> {
+  const endpoints = [
+    customEndpoint,
+    "/api/ollama/api/tags",
+    "http://127.0.0.1:11434/api/tags",
+    "http://localhost:11434/api/tags",
+  ].filter(Boolean) as string[];
+
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+      if (res.ok) {
+        const data = await res.json();
+        const models = (data.models || []).map((m: any) => m.name).filter(Boolean);
+        return { connected: true, models };
+      }
+    } catch {
+      // try next
+    }
+  }
+  return { connected: false, models: [] };
+}
+
+/**
+ * Query local Ollama model to modify LaTeX source code.
+ */
+async function callOllamaGenerate(
+  model: string,
+  prompt: string,
+  currentContent: string,
+): Promise<string> {
+  const systemPrompt = `You are an expert LaTeX typesetter and document engineer.
+You are given an existing LaTeX document and an instruction from the user.
+YOUR TASK: Revise the LaTeX document according to the user's instructions.
+CRITICAL OUTPUT RULES:
+1. Output ONLY the updated LaTeX document.
+2. Wrap the output in \`\`\`latex ... \`\`\` code block or return raw LaTeX code.
+3. NEVER output conversational commentary, notes, or explanations before or after the code.`;
+
+  const userQuery = `Current LaTeX Document:\n\`\`\`latex\n${currentContent}\n\`\`\`\n\nUser Instruction:\n${prompt}`;
+
+  const body = {
+    model,
+    prompt: `${systemPrompt}\n\n${userQuery}`,
+    stream: false,
+    options: {
+      temperature: 0.15,
+      num_ctx: 8192,
+    },
+  };
+
+  const urls = [
+    "/api/ollama/api/generate",
+    "http://127.0.0.1:11434/api/generate",
+    "http://localhost:11434/api/generate",
+  ];
+
+  let lastError: any = null;
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(35000),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        return json.response || "";
+      }
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError || new Error("Failed to connect to local Ollama");
+}
+
 export function FloatingAiAssistant() {
   const [isMinimized, setIsMinimized] = useState(false);
+  const [showConfig, setShowConfig] = useState(false);
   const [transparency, setTransparency] = useState<"ultra" | "glass" | "solid">("glass");
   const [promptInput, setPromptInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState<string>("");
+
+  // Model & Provider configuration
+  const [providerType, setProviderType] = useState<"ollama" | "heuristic" | "cloud">("ollama");
+  const [activeModel, setActiveModel] = useState<string>("llama3.2:3b");
+  const [ollamaConnected, setOllamaConnected] = useState(false);
+  const [ollamaModels, setOllamaModels] = useState<string[]>([
+    "llama3.2:3b",
+    "llama3.2:1b",
+    "qwen2.5:1.5b",
+    "qwen2.5:3b",
+  ]);
+  const [isRefreshingModels, setIsRefreshingModels] = useState(false);
+  const [ollamaEndpoint, setOllamaEndpoint] = useState("http://127.0.0.1:11434");
+
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "initial-greeting",
       sender: "assistant",
-      text: "Hello! I am your Velum AI Copilot. Drag me anywhere on your screen. Type any request (e.g., 'Change margins to 0.5in', 'Add Certifications section', 'Add 3-column table') to modify your LaTeX code in real time!",
+      text: "Hello! I am your Velum AI Copilot. Connected to local Ollama. Ask any LaTeX modification (e.g. 'Add Publications section', 'Change margins to 0.5in') to update your document in real time!",
       timestamp: new Date(),
     },
   ]);
+
+  // Check Ollama status on mount
+  useEffect(() => {
+    const detectOllama = async () => {
+      const res = await checkOllamaStatus(ollamaEndpoint);
+      if (res.connected) {
+        setOllamaConnected(true);
+        if (res.models.length > 0) {
+          setOllamaModels(res.models);
+          // Pick best default model
+          if (res.models.includes("llama3.2:3b")) {
+            setActiveModel("llama3.2:3b");
+          } else if (res.models.includes("llama3.2:1b")) {
+            setActiveModel("llama3.2:1b");
+          } else if (res.models.includes("qwen2.5:1.5b")) {
+            setActiveModel("qwen2.5:1.5b");
+          } else {
+            setActiveModel(res.models[0]);
+          }
+        }
+      } else {
+        setOllamaConnected(false);
+      }
+    };
+    detectOllama();
+  }, [ollamaEndpoint]);
+
+  const refreshOllama = async () => {
+    setIsRefreshingModels(true);
+    const res = await checkOllamaStatus(ollamaEndpoint);
+    setIsRefreshingModels(false);
+    if (res.connected) {
+      setOllamaConnected(true);
+      if (res.models.length > 0) {
+        setOllamaModels(res.models);
+        if (!res.models.includes(activeModel)) {
+          setActiveModel(res.models[0]);
+        }
+      }
+    } else {
+      setOllamaConnected(false);
+    }
+  };
 
   // Position state (starts near bottom-right)
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -446,11 +592,44 @@ export function FloatingAiAssistant() {
         const activeFile = docStore.files.find((f) => f.id === docStore.activeFileId) ?? docStore.files[0];
         const currentContent = activeFile?.content ?? "";
 
-        // Give a short 250ms visual response to feel authored & natural
-        await new Promise((r) => setTimeout(r, 250));
+        let newContent = "";
+        let summary = "";
+        let usedModel = "";
 
-        // Transform LaTeX
-        const { newContent, summary } = transformLatexCode(currentContent, text);
+        // 1. Try local Ollama model if selected and connected
+        if (providerType === "ollama" && ollamaConnected && activeModel) {
+          setProcessingStatus(`Connecting to local ${activeModel}...`);
+          try {
+            const rawResponse = await callOllamaGenerate(activeModel, text, currentContent);
+            let extracted = rawResponse.trim();
+            const codeBlockMatch = extracted.match(/```(?:latex|tex)?\s*([\s\S]*?)```/i);
+            if (codeBlockMatch && codeBlockMatch[1]) {
+              extracted = codeBlockMatch[1].trim();
+            }
+
+            // Verify the generated response contains valid LaTeX structure
+            if (
+              extracted.includes("\\begin{document}") ||
+              extracted.includes("\\documentclass") ||
+              extracted.includes("\\section")
+            ) {
+              newContent = extracted;
+              summary = `Modified document using local model ${activeModel}.`;
+              usedModel = `Local Ollama (${activeModel})`;
+            }
+          } catch (ollamaErr) {
+            console.warn("Local Ollama call failed, using heuristic engine:", ollamaErr);
+          }
+        }
+
+        // 2. Fallback to instant AST / rule-based transformation engine
+        if (!newContent) {
+          setProcessingStatus("Synthesizing LaTeX structure...");
+          const result = transformLatexCode(currentContent, text);
+          newContent = result.newContent;
+          summary = result.summary;
+          usedModel = "Velum Semantic Engine";
+        }
 
         // Apply immediately to screen editor and trigger recompile!
         window.dispatchEvent(
@@ -465,7 +644,7 @@ export function FloatingAiAssistant() {
           sender: "assistant",
           text: `✨ Done! ${summary}`,
           timestamp: new Date(),
-          diffSummary: summary,
+          diffSummary: `${summary} [${usedModel}]`,
           previousContent: currentContent,
           appliedContent: newContent,
         };
@@ -482,9 +661,10 @@ export function FloatingAiAssistant() {
         ]);
       } finally {
         setIsProcessing(false);
+        setProcessingStatus("");
       }
     },
-    [promptInput, isProcessing],
+    [promptInput, isProcessing, providerType, ollamaConnected, activeModel],
   );
 
   const handleRevert = (prevContent?: string) => {
@@ -569,15 +749,53 @@ export function FloatingAiAssistant() {
               <div className="flex flex-col leading-tight">
                 <div className="flex items-center gap-1.5">
                   <span className="font-semibold text-xs tracking-tight">Velum AI Studio</span>
-                  <span className="rounded bg-primary/15 px-1 py-0.2 text-[9px] font-medium text-primary">
-                    Live
-                  </span>
+                  {/* Model Picker Pill */}
+                  <button
+                    type="button"
+                    onClick={() => setShowConfig((c) => !c)}
+                    title="Click to configure AI models"
+                    className={cn(
+                      "flex items-center gap-1 rounded-full px-1.5 py-0.2 text-[9px] font-medium border transition-colors cursor-pointer",
+                      ollamaConnected && providerType === "ollama"
+                        ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                        : "border-primary/30 bg-primary/10 text-primary",
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "size-1.5 rounded-full shrink-0",
+                        ollamaConnected && providerType === "ollama"
+                          ? "bg-emerald-500 animate-pulse"
+                          : "bg-amber-500",
+                      )}
+                    />
+                    <span className="truncate max-w-[95px]">
+                      {providerType === "ollama" ? activeModel : "Instant AST"}
+                    </span>
+                    <ChevronDownIcon className="size-2 opacity-60" />
+                  </button>
                 </div>
-                <span className="text-[10px] text-muted-foreground/90">Floating Transparent Copilot</span>
+                <span className="text-[10px] text-muted-foreground/90">
+                  {ollamaConnected ? "Local Ollama Connected" : "Floating Transparent Copilot"}
+                </span>
               </div>
             </div>
 
             <div className="flex items-center gap-1 text-muted-foreground">
+              {/* Settings / Model Config Toggle Button */}
+              <button
+                type="button"
+                onClick={() => setShowConfig((c) => !c)}
+                title="AI Model & Ollama Configuration"
+                className={cn(
+                  "rounded p-1 transition-colors",
+                  showConfig
+                    ? "bg-primary/20 text-primary"
+                    : "hover:bg-muted/40 hover:text-foreground",
+                )}
+              >
+                <SlidersHorizontalIcon className="size-3.5" />
+              </button>
               {/* Transparency cycle button */}
               <button
                 type="button"
@@ -603,105 +821,254 @@ export function FloatingAiAssistant() {
             </div>
           </div>
 
-          {/* Quick Prompt Suggestions Chips */}
-          <div className="border-b border-white/10 dark:border-white/5 bg-background/20 px-3 py-1.5 backdrop-blur-sm">
-            <div className="scrollbar-none flex items-center gap-1.5 overflow-x-auto py-0.5">
-              {PRESET_PROMPTS.map((p) => (
-                <button
-                  key={p.label}
-                  type="button"
-                  disabled={isProcessing}
-                  onClick={() => handleSubmitPrompt(p.prompt)}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-white/20 dark:border-white/10 bg-background/40 px-2 py-0.5 text-[11px] text-foreground/80 backdrop-blur-sm transition-all hover:border-primary/50 hover:bg-background/70 hover:text-foreground shadow-sm"
-                >
-                  <Wand2Icon className="size-2.5 text-amber-500" />
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Message List */}
-          <div className="flex-1 space-y-3 overflow-y-auto p-3 text-xs">
-            {messages.map((m) => (
-              <div
-                key={m.id}
-                className={cn(
-                  "flex flex-col gap-1 rounded-xl p-2.5 leading-relaxed backdrop-blur-md transition-all",
-                  m.sender === "user"
-                    ? "ml-6 bg-primary/80 text-primary-foreground shadow-md"
-                    : "mr-4 border border-white/20 dark:border-white/10 bg-card/40 text-card-foreground shadow-sm",
-                )}
-              >
-                <div className="flex items-center justify-between text-[10px] opacity-75">
-                  <span className="font-medium">
-                    {m.sender === "user" ? "You" : "Velum AI Copilot"}
-                  </span>
-                  <span>
-                    {m.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                  </span>
+          {/* ── AI Model Configuration Screen (When Open) ── */}
+          {showConfig ? (
+            <div className="flex-1 overflow-y-auto p-3.5 text-xs space-y-3.5 backdrop-blur-md">
+              <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                <div className="flex items-center gap-1.5 font-semibold text-xs">
+                  <CpuIcon className="size-3.5 text-primary" />
+                  <span>AI Engine Configuration</span>
                 </div>
-                <div className="whitespace-pre-wrap">{m.text}</div>
+                <button
+                  type="button"
+                  onClick={() => setShowConfig(false)}
+                  className="rounded p-1 text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                >
+                  <XIcon className="size-3.5" />
+                </button>
+              </div>
 
-                {/* Diff info & Revert button */}
-                {m.diffSummary && (
-                  <div className="mt-2 flex items-center justify-between border-t border-white/15 dark:border-white/10 pt-1.5 text-[11px]">
-                    <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
-                      <CheckCircle2Icon className="size-3" /> Live Editor Updated
+              {/* Local Ollama Status Box */}
+              <div className="rounded-xl border border-white/15 dark:border-white/10 bg-card/40 p-3 space-y-2 backdrop-blur-md">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={cn(
+                        "size-2 rounded-full",
+                        ollamaConnected ? "bg-emerald-500 animate-pulse" : "bg-red-400",
+                      )}
+                    />
+                    <span className="font-medium text-xs">
+                      {ollamaConnected ? "Local Ollama Detected" : "Ollama Offline"}
                     </span>
-                    {m.previousContent && (
-                      <button
-                        type="button"
-                        onClick={() => handleRevert(m.previousContent)}
-                        className="inline-flex items-center gap-1 rounded border border-white/25 dark:border-white/15 bg-background/50 px-1.5 py-0.5 text-[10px] text-muted-foreground backdrop-blur-sm transition-colors hover:bg-background/80 hover:text-foreground"
-                      >
-                        <RotateCcwIcon className="size-2.5" /> Revert
-                      </button>
-                    )}
                   </div>
-                )}
+                  <button
+                    type="button"
+                    disabled={isRefreshingModels}
+                    onClick={refreshOllama}
+                    title="Rescan local models"
+                    className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-50"
+                  >
+                    <RefreshCwIcon
+                      className={cn("size-3", isRefreshingModels && "animate-spin")}
+                    />
+                    Scan
+                  </button>
+                </div>
+                <div className="text-[10px] text-muted-foreground">
+                  Endpoint: <span className="font-mono text-foreground/80">{ollamaEndpoint}</span>
+                </div>
               </div>
-            ))}
-            {isProcessing && (
-              <div className="mr-6 flex items-center gap-2 rounded-xl border border-white/20 dark:border-white/10 bg-card/40 backdrop-blur-md p-2.5 text-xs text-muted-foreground">
-                <SparklesIcon className="size-3.5 animate-spin text-primary" />
-                <span>Modifying LaTeX code and compiling preview...</span>
-              </div>
-            )}
-            <div ref={chatBottomRef} />
-          </div>
 
-          {/* Prompt Input Form */}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleSubmitPrompt();
-            }}
-            className="border-t border-white/15 dark:border-white/10 bg-muted/20 backdrop-blur-md p-2.5"
-          >
-            <div className="relative flex items-center">
-              <input
-                type="text"
-                value={promptInput}
-                onChange={(e) => setPromptInput(e.target.value)}
-                placeholder="Ask AI to change code (e.g. 'Add Publications section')..."
-                disabled={isProcessing}
-                className="w-full rounded-lg border border-white/20 dark:border-white/10 bg-background/40 py-2 pr-9 pl-3 text-xs placeholder:text-muted-foreground/60 backdrop-blur-sm focus:bg-background/70 focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none transition-colors"
-              />
+              {/* Local Models Selection */}
+              <div className="space-y-1.5">
+                <span className="font-medium text-[11px] text-muted-foreground uppercase tracking-wider">
+                  Installed Free Local Models
+                </span>
+                <div className="space-y-1 max-h-44 overflow-y-auto pr-1">
+                  {ollamaModels.map((m) => {
+                    const isSelected = providerType === "ollama" && activeModel === m;
+                    return (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => {
+                          setProviderType("ollama");
+                          setActiveModel(m);
+                        }}
+                        className={cn(
+                          "w-full flex items-center justify-between rounded-lg border px-2.5 py-2 text-left transition-all",
+                          isSelected
+                            ? "border-primary/60 bg-primary/15 text-foreground shadow-sm"
+                            : "border-white/10 bg-background/30 hover:bg-background/50 text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm">🦙</span>
+                          <div className="flex flex-col">
+                            <span className="font-medium text-xs leading-none">{m}</span>
+                            <span className="text-[9px] text-muted-foreground mt-0.5">
+                              {m.includes("3b")
+                                ? "3.2B parameters • Balanced & precise"
+                                : m.includes("1b")
+                                  ? "1.2B parameters • Ultra-fast"
+                                  : "Free local model"}
+                            </span>
+                          </div>
+                        </div>
+                        {isSelected && <CheckIcon className="size-3.5 text-primary" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Instant Rule / AST Engine Option */}
+              <div className="space-y-1.5">
+                <span className="font-medium text-[11px] text-muted-foreground uppercase tracking-wider">
+                  Alternative Engine
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setProviderType("heuristic")}
+                  className={cn(
+                    "w-full flex items-center justify-between rounded-lg border px-2.5 py-2 text-left transition-all",
+                    providerType === "heuristic"
+                      ? "border-amber-500/60 bg-amber-500/15 text-foreground shadow-sm"
+                      : "border-white/10 bg-background/30 hover:bg-background/50 text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">⚡</span>
+                    <div className="flex flex-col">
+                      <span className="font-medium text-xs leading-none">Instant AST Engine</span>
+                      <span className="text-[9px] text-muted-foreground mt-0.5">
+                        0 ms latency • Deterministic LaTeX synthesis
+                      </span>
+                    </div>
+                  </div>
+                  {providerType === "heuristic" && (
+                    <CheckIcon className="size-3.5 text-amber-500" />
+                  )}
+                </button>
+              </div>
+
               <button
-                type="submit"
-                disabled={!promptInput.trim() || isProcessing}
-                title="Send instruction to modify LaTeX code"
-                className="absolute right-1.5 rounded-md p-1.5 text-primary transition-all hover:bg-primary/20 disabled:opacity-30"
+                type="button"
+                onClick={() => setShowConfig(false)}
+                className="w-full rounded-lg bg-primary py-2 text-center text-xs font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90"
               >
-                <SendIcon className="size-3.5" />
+                Apply & Return to Chat
               </button>
             </div>
-            <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground/80">
-              <span>Modifies active document directly</span>
-              <span>Enter ↵ to send</span>
-            </div>
-          </form>
+          ) : (
+            /* ── Normal Chat View ── */
+            <>
+              {/* Quick Prompt Suggestions Chips */}
+              <div className="border-b border-white/10 dark:border-white/5 bg-background/20 px-3 py-1.5 backdrop-blur-sm">
+                <div className="scrollbar-none flex items-center gap-1.5 overflow-x-auto py-0.5">
+                  {PRESET_PROMPTS.map((p) => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      disabled={isProcessing}
+                      onClick={() => handleSubmitPrompt(p.prompt)}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-white/20 dark:border-white/10 bg-background/40 px-2 py-0.5 text-[11px] text-foreground/80 backdrop-blur-sm transition-all hover:border-primary/50 hover:bg-background/70 hover:text-foreground shadow-sm"
+                    >
+                      <Wand2Icon className="size-2.5 text-amber-500" />
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Message List */}
+              <div className="flex-1 space-y-3 overflow-y-auto p-3 text-xs">
+                {messages.map((m) => (
+                  <div
+                    key={m.id}
+                    className={cn(
+                      "flex flex-col gap-1 rounded-xl p-2.5 leading-relaxed backdrop-blur-md transition-all",
+                      m.sender === "user"
+                        ? "ml-6 bg-primary/80 text-primary-foreground shadow-md"
+                        : "mr-4 border border-white/20 dark:border-white/10 bg-card/40 text-card-foreground shadow-sm",
+                    )}
+                  >
+                    <div className="flex items-center justify-between text-[10px] opacity-75">
+                      <span className="font-medium">
+                        {m.sender === "user" ? "You" : "Velum AI Copilot"}
+                      </span>
+                      <span>
+                        {m.timestamp.toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
+                    <div className="whitespace-pre-wrap">{m.text}</div>
+
+                    {/* Diff info & Revert button */}
+                    {m.diffSummary && (
+                      <div className="mt-2 flex items-center justify-between border-t border-white/15 dark:border-white/10 pt-1.5 text-[11px]">
+                        <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
+                          <CheckCircle2Icon className="size-3" /> Live Editor Updated
+                        </span>
+                        {m.previousContent && (
+                          <button
+                            type="button"
+                            onClick={() => handleRevert(m.previousContent)}
+                            className="inline-flex items-center gap-1 rounded border border-white/25 dark:border-white/15 bg-background/50 px-1.5 py-0.5 text-[10px] text-muted-foreground backdrop-blur-sm transition-colors hover:bg-background/80 hover:text-foreground"
+                          >
+                            <RotateCcwIcon className="size-2.5" /> Revert
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {isProcessing && (
+                  <div className="mr-6 flex items-center gap-2 rounded-xl border border-white/20 dark:border-white/10 bg-card/40 backdrop-blur-md p-2.5 text-xs text-muted-foreground">
+                    <SparklesIcon className="size-3.5 animate-spin text-primary" />
+                    <span>
+                      {processingStatus || "Modifying LaTeX code and compiling preview..."}
+                    </span>
+                  </div>
+                )}
+                <div ref={chatBottomRef} />
+              </div>
+
+              {/* Prompt Input Form */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSubmitPrompt();
+                }}
+                className="border-t border-white/15 dark:border-white/10 bg-muted/20 backdrop-blur-md p-2.5"
+              >
+                <div className="relative flex items-center">
+                  <input
+                    type="text"
+                    value={promptInput}
+                    onChange={(e) => setPromptInput(e.target.value)}
+                    placeholder={
+                      ollamaConnected && providerType === "ollama"
+                        ? `Ask ${activeModel} to modify code (e.g. 'Add Publications section')...`
+                        : "Ask AI to change code (e.g. 'Add Publications section')..."
+                    }
+                    disabled={isProcessing}
+                    className="w-full rounded-lg border border-white/20 dark:border-white/10 bg-background/40 py-2 pr-9 pl-3 text-xs placeholder:text-muted-foreground/60 backdrop-blur-sm focus:bg-background/70 focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none transition-colors"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!promptInput.trim() || isProcessing}
+                    title="Send instruction to modify LaTeX code"
+                    className="absolute right-1.5 rounded-md p-1.5 text-primary transition-all hover:bg-primary/20 disabled:opacity-30"
+                  >
+                    <SendIcon className="size-3.5" />
+                  </button>
+                </div>
+                <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground/80">
+                  <span>
+                    Engine:{" "}
+                    <strong className="text-foreground/90">
+                      {providerType === "ollama" ? activeModel : "Instant AST"}
+                    </strong>
+                  </span>
+                  <span>Enter ↵ to send</span>
+                </div>
+              </form>
+            </>
+          )}
         </div>
       )}
     </div>

@@ -266,13 +266,8 @@
         }
         saveVfs();
 
-        // Browser Download Trigger for Export / Downloads
-        if (
-          p.startsWith("/downloads/") ||
-          p.endsWith(".pdf") ||
-          p.endsWith(".md") ||
-          p.endsWith(".zip")
-        ) {
+        // Browser Download Trigger: ONLY when explicitly saving/exporting to /downloads/
+        if (p.startsWith("/downloads/")) {
           try {
             const fileName = p.split("/").pop() || "document.pdf";
             let blob;

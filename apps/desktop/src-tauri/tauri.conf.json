@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "identifier": "com.latexeditor.desktop",
-  "productName": "Latex Editor",
+  "identifier": "com.tectonic-editor.desktop",
+  "productName": "Opal",
   "version": "1.5.0",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Latex Editor",
+        "title": "Opal",
         "fullscreen": false,
         "maximized": true,
         "width": 1400,

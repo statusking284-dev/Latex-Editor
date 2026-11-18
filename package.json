@@ -1,6 +1,6 @@
 {
-  "name": "latex-editor",
-  "description": "Offline-first desktop LaTeX editor with built-in AI copilot",
+  "name": "@opal/root",
+  "description": "Offline-first LaTeX editor with pluggable AI",
   "version": "1.5.0",
   "private": true,
   "workspaces": [

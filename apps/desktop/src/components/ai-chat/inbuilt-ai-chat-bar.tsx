@@ -162,20 +162,29 @@ const PRESET_PROMPTS = [
 ];
 
 /**
- * Fetch ONLY compatible, fast, and real installed models from local Ollama.
- * Filters out embedding models, vision-language models, and displays only available chat models.
+ * Fetch models ONLY from the exact IP/endpoint entered by the user.
+ * Does NOT auto-fetch on mount. Strictly validates and queries the user's IP.
  */
-async function fetchRealOllamaModels(endpoint = "http://127.0.0.1:11434"): Promise<{ connected: boolean; models: string[]; error?: string }> {
-  const cleanEndpoint = endpoint.replace(/\/+$/, "");
-  const urls = [
-    "/api/ollama/api/tags",
-    `${cleanEndpoint}/api/tags`,
-    "http://127.0.0.1:11434/api/tags",
-  ];
+async function fetchRealOllamaModels(endpoint: string): Promise<{ connected: boolean; models: string[]; error?: string }> {
+  const trimmed = (endpoint || "").trim();
+  if (!trimmed) {
+    return { connected: false, models: [], error: "Please enter the Ollama Server IP address and port (e.g. http://127.0.0.1:11434)." };
+  }
 
+  const cleanEndpoint = trimmed.startsWith("http://") || trimmed.startsWith("https://")
+    ? trimmed.replace(/\/+$/, "")
+    : `http://${trimmed}`.replace(/\/+$/, "");
+
+  const isLocal = cleanEndpoint.includes("127.0.0.1") || cleanEndpoint.includes("localhost");
+  // For local IP on dev web server, include proxy fallback in case of direct CORS blockage
+  const urls = isLocal
+    ? [`${cleanEndpoint}/api/tags`, "/api/ollama/api/tags"]
+    : [`${cleanEndpoint}/api/tags`];
+
+  let lastErrorMsg = "";
   for (const url of urls) {
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(3500) });
+      const res = await fetch(url, { signal: AbortSignal.timeout(4500) });
       if (res.ok) {
         const data = await res.json();
         const rawModels: string[] = (data.models || []).map((m: any) => m.name);
@@ -184,9 +193,7 @@ async function fetchRealOllamaModels(endpoint = "http://127.0.0.1:11434"): Promi
         const compatible = rawModels.filter((name: string) => {
           if (!name) return false;
           const lower = name.toLowerCase();
-          // Exclude embedding models
           if (lower.includes("embed")) return false;
-          // Exclude vision models (vl/vision) which stall CPU inference
           if (lower.includes("vl") || lower.includes("vision")) return false;
           return true;
         });
@@ -204,18 +211,29 @@ async function fetchRealOllamaModels(endpoint = "http://127.0.0.1:11434"): Promi
           return score(a) - score(b);
         });
 
+        if (compatible.length === 0) {
+          return { connected: true, models: [], error: `Connected to ${cleanEndpoint}, but no compatible text generation models were found.` };
+        }
+
         return { connected: true, models: compatible };
+      } else {
+        lastErrorMsg = `Ollama server at ${cleanEndpoint} returned HTTP ${res.status}`;
       }
-    } catch {
-      // try next URL
+    } catch (e: any) {
+      lastErrorMsg = e.message || "Connection refused";
     }
   }
-  return { connected: false, models: [], error: `Could not reach Ollama at ${endpoint}. Make sure Ollama is running.` };
+
+  return {
+    connected: false,
+    models: [],
+    error: `Could not connect to "${cleanEndpoint}". Please check the IP address, port, and ensure Ollama is running. (${lastErrorMsg})`,
+  };
 }
 
 /**
  * Execute prompt with local Ollama model to modify LaTeX source code.
- * Uses optimized CPU context (num_ctx: 2048) for instant response times.
+ * Uses the exact IP endpoint configured by the user.
  */
 async function callOllamaGenerate(
   model: string,
@@ -244,11 +262,14 @@ CRITICAL OUTPUT RULES:
     },
   };
 
-  const urls = [
-    "/api/ollama/api/generate",
-    `${endpoint.replace(/\/+$/, "")}/api/generate`,
-    "http://127.0.0.1:11434/api/generate",
-  ];
+  const cleanEndpoint = endpoint.trim().startsWith("http://") || endpoint.trim().startsWith("https://")
+    ? endpoint.trim().replace(/\/+$/, "")
+    : `http://${endpoint.trim()}`.replace(/\/+$/, "");
+
+  const isLocal = cleanEndpoint.includes("127.0.0.1") || cleanEndpoint.includes("localhost");
+  const urls = isLocal
+    ? [`${cleanEndpoint}/api/generate`, "/api/ollama/api/generate"]
+    : [`${cleanEndpoint}/api/generate`];
 
   let lastError: any = null;
   for (const url of urls) {
@@ -267,7 +288,7 @@ CRITICAL OUTPUT RULES:
       lastError = e;
     }
   }
-  throw lastError || new Error("Failed to connect to local Ollama. Please ensure Ollama is running.");
+  throw lastError || new Error(`Failed to connect to Ollama at ${cleanEndpoint}. Please ensure Ollama is running.`);
 }
 
 /**
@@ -372,28 +393,36 @@ export function InbuiltAiChatBar() {
     }
   }, [messages, isExpanded]);
 
-  // Auto-discover available compatible Ollama models on mount
-  useEffect(() => {
-    fetchRealOllamaModels(ollamaUrl).then((res) => {
-      if (res.connected && res.models.length > 0) {
-        setOllamaModels(res.models);
-        setSelectedOllamaModel((prev) => prev || res.models[0]);
-      }
-    });
-  }, [ollamaUrl]);
-
-  // Test local Ollama with live ping verification
+  // Test Ollama ONLY when user clicks the button with their entered IP
   const handleTestOllama = async () => {
+    const rawUrl = ollamaUrl.trim();
+    if (!rawUrl) {
+      setOllamaResult({
+        ok: false,
+        message: "Please enter your Ollama Server IP address and port (e.g. http://127.0.0.1:11434).",
+      });
+      setOllamaModels([]);
+      setSelectedOllamaModel("");
+      return;
+    }
+
+    const cleanEndpoint = rawUrl.startsWith("http://") || rawUrl.startsWith("https://")
+      ? rawUrl.replace(/\/+$/, "")
+      : `http://${rawUrl}`.replace(/\/+$/, "");
+
     setOllamaTesting(true);
     setOllamaResult(null);
+    setOllamaModels([]); // Do not show models until this IP successfully connects!
+    setSelectedOllamaModel("");
+
     try {
-      const res = await fetchRealOllamaModels(ollamaUrl);
+      const res = await fetchRealOllamaModels(cleanEndpoint);
       if (res.connected && res.models.length > 0) {
         setOllamaModels(res.models);
-        const targetModel = selectedOllamaModel || res.models[0];
+        const targetModel = res.models[0];
         setSelectedOllamaModel(targetModel);
 
-        // Perform a quick live test ping to verify generation
+        // Perform a quick live test ping to verify generation on this exact IP
         const testPingStart = performance.now();
         const pingBody = {
           model: targetModel,
@@ -401,8 +430,11 @@ export function InbuiltAiChatBar() {
           stream: false,
           options: { num_predict: 1, num_ctx: 512 },
         };
-        const cleanEndpoint = ollamaUrl.replace(/\/+$/, "");
-        const pingUrls = ["/api/ollama/api/generate", `${cleanEndpoint}/api/generate`, "http://127.0.0.1:11434/api/generate"];
+
+        const isLocal = cleanEndpoint.includes("127.0.0.1") || cleanEndpoint.includes("localhost");
+        const pingUrls = isLocal
+          ? [`${cleanEndpoint}/api/generate`, "/api/ollama/api/generate"]
+          : [`${cleanEndpoint}/api/generate`];
 
         let pingOk = false;
         for (const pUrl of pingUrls) {
@@ -411,7 +443,7 @@ export function InbuiltAiChatBar() {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(pingBody),
-              signal: AbortSignal.timeout(6000),
+              signal: AbortSignal.timeout(5000),
             });
             if (pRes.ok) {
               pingOk = true;
@@ -426,22 +458,22 @@ export function InbuiltAiChatBar() {
         if (pingOk) {
           setOllamaResult({
             ok: true,
-            message: `Connected & Verified! ${targetModel} is online and responded in ${elapsed}ms. Found ${res.models.length} ready models.`,
+            message: `Connected to ${cleanEndpoint}! Verified response in ${elapsed}ms. Found ${res.models.length} ready models.`,
           });
         } else {
           setOllamaResult({
             ok: true,
-            message: `Connected! Found ${res.models.length} models (${targetModel} ready).`,
+            message: `Connected to ${cleanEndpoint}! Found ${res.models.length} ready models.`,
           });
         }
       } else {
         setOllamaResult({
           ok: false,
-          message: res.error || "Ollama is running, but no compatible chat models found.",
+          message: res.error || `Could not find compatible models at ${cleanEndpoint}.`,
         });
       }
     } catch (e: any) {
-      setOllamaResult({ ok: false, message: `Failed to connect: ${e.message}` });
+      setOllamaResult({ ok: false, message: `Failed to connect to ${cleanEndpoint}: ${e.message}` });
     } finally {
       setOllamaTesting(false);
     }
@@ -701,7 +733,12 @@ export function InbuiltAiChatBar() {
                         <input
                           type="url"
                           value={ollamaUrl}
-                          onChange={(e) => setOllamaUrl(e.target.value)}
+                          onChange={(e) => {
+                            setOllamaUrl(e.target.value);
+                            setOllamaModels([]);
+                            setSelectedOllamaModel("");
+                            setOllamaResult(null);
+                          }}
                           placeholder="http://127.0.0.1:11434"
                           className="w-full rounded-xl border border-input bg-background/60 py-2 pr-3 pl-9 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-ring focus:outline-none"
                         />
@@ -829,16 +866,9 @@ export function InbuiltAiChatBar() {
 
                   {ollamaModels.length === 0 && !ollamaTesting && (
                     <div className="rounded-xl border border-dashed border-border/70 p-4 text-center">
-                      <p className="text-xs text-muted-foreground mb-1.5">
-                        No compatible text models detected yet.
+                      <p className="text-xs text-muted-foreground">
+                        Enter your Ollama IP address above and click <strong>Connect & Test Ollama</strong> to load your models.
                       </p>
-                      <button
-                        type="button"
-                        onClick={handleTestOllama}
-                        className="text-xs text-primary underline font-medium"
-                      >
-                        Click to discover local Ollama models
-                      </button>
                     </div>
                   )}
                 </div>

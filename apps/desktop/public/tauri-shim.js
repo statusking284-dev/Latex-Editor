@@ -5,6 +5,7 @@
   }
 
   console.info("[Opal Browser Shim] Activating Tauri browser compatibility layer...");
+  window.__TAURI_BROWSER_SHIM__ = true;
 
   const callbacks = new Map();
   let nextCallbackId = 1;

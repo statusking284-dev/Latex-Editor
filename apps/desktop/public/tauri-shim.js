@@ -4,7 +4,9 @@
     return;
   }
 
-  console.info("[Opal Browser Shim] Activating Tauri browser compatibility layer...");
+  console.info(
+    "[Opal Browser Shim] Activating Tauri browser compatibility layer...",
+  );
   window.__TAURI_BROWSER_SHIM__ = true;
 
   const callbacks = new Map();
@@ -26,7 +28,10 @@
       } catch {}
     }
     if (typeof val === "object") {
-      const keys = Object.keys(val).map(Number).filter(n => !isNaN(n)).sort((a, b) => a - b);
+      const keys = Object.keys(val)
+        .map(Number)
+        .filter((n) => !isNaN(n))
+        .sort((a, b) => a - b);
       if (keys.length > 0) {
         const arr = new Uint8Array(keys.length);
         for (let i = 0; i < keys.length; i++) arr[i] = val[keys[i]];
@@ -43,7 +48,11 @@
   const VFS_DIRS_KEY = "opal_browser_vfs_dirs";
 
   const vfs = new Map();
-  const vfsDirs = new Set(["/workspace", "/workspace/Documents", "/workspace/Documents/Opal"]);
+  const vfsDirs = new Set([
+    "/workspace",
+    "/workspace/Documents",
+    "/workspace/Documents/Opal",
+  ]);
 
   try {
     const savedDirs = localStorage.getItem(VFS_DIRS_KEY);
@@ -217,7 +226,10 @@
         saveVfs();
         return null;
       }
-      if (cmd === "plugin:fs|write_file" || cmd === "plugin:fs|write_text_file") {
+      if (
+        cmd === "plugin:fs|write_file" ||
+        cmd === "plugin:fs|write_text_file"
+      ) {
         let p = "";
         if (options && options.headers && options.headers.path) {
           p = decodeURIComponent(options.headers.path);
@@ -279,7 +291,9 @@
               const bytes = rawBytes || new TextEncoder().encode(contentStr);
               blob = new Blob([bytes], { type: "application/zip" });
             } else {
-              blob = new Blob([contentStr], { type: "text/plain;charset=utf-8" });
+              blob = new Blob([contentStr], {
+                type: "text/plain;charset=utf-8",
+              });
             }
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
@@ -289,7 +303,10 @@
             a.click();
             document.body.removeChild(a);
             setTimeout(() => URL.revokeObjectURL(url), 10000);
-            console.info("[Opal Browser Shim] Download triggered for:", fileName);
+            console.info(
+              "[Opal Browser Shim] Download triggered for:",
+              fileName,
+            );
           } catch (e) {
             console.error("[Opal Browser Shim] Download trigger failed:", e);
           }
@@ -328,7 +345,12 @@
             if (!seen.has(firstSegment)) {
               seen.add(firstSegment);
               const isDir = rel.includes("/");
-              results.push({ name: firstSegment, isDirectory: isDir, isFile: !isDir, isSymlink: false });
+              results.push({
+                name: firstSegment,
+                isDirectory: isDir,
+                isFile: !isDir,
+                isSymlink: false,
+              });
             }
           }
         }
@@ -338,7 +360,12 @@
             const firstSegment = rel.split("/")[0];
             if (firstSegment && !seen.has(firstSegment)) {
               seen.add(firstSegment);
-              results.push({ name: firstSegment, isDirectory: true, isFile: false, isSymlink: false });
+              results.push({
+                name: firstSegment,
+                isDirectory: true,
+                isFile: false,
+                isSymlink: false,
+              });
             }
           }
         }
@@ -353,7 +380,13 @@
             isFile: !isDir,
             isDirectory: isDir,
             isSymlink: false,
-            size: isDir ? 0 : (content ? (typeof content === "string" ? new TextEncoder().encode(content).length : content.length) : 0),
+            size: isDir
+              ? 0
+              : content
+                ? typeof content === "string"
+                  ? new TextEncoder().encode(content).length
+                  : content.length
+                : 0,
             mtime: Date.now(),
             atime: Date.now(),
             birthtime: Date.now(),
@@ -468,7 +501,9 @@
                 }
               }
               if (!source && docState.activeFileId) {
-                const active = docState.files.find((f) => f.id === docState.activeFileId);
+                const active = docState.files.find(
+                  (f) => f.id === docState.activeFileId,
+                );
                 if (active && active.content) {
                   source = active.content;
                 }
@@ -487,7 +522,12 @@
         if (!source.trim()) {
           for (const [k, v] of vfs.entries()) {
             const strVal = valueToString(v);
-            if (strVal.trim() && (k.endsWith("/" + mainFile) || k === mainFile || k.endsWith(".tex"))) {
+            if (
+              strVal.trim() &&
+              (k.endsWith("/" + mainFile) ||
+                k === mainFile ||
+                k.endsWith(".tex"))
+            ) {
               source = strVal;
               break;
             }
@@ -497,13 +537,17 @@
         // 3. Merge VFS files for any images or secondary files
         const prefix = projectDir === "/" ? "/" : projectDir + "/";
         for (const [fPath, fContent] of vfs.entries()) {
-          const rel = fPath.startsWith(prefix) ? fPath.slice(prefix.length) : fPath.split("/").pop();
+          const rel = fPath.startsWith(prefix)
+            ? fPath.slice(prefix.length)
+            : fPath.split("/").pop();
           if (rel && !projectFiles[rel]) {
             projectFiles[rel] = valueToString(fContent);
           }
         }
 
-        console.info(`[Opal Compiler] Compiling ${mainFile} (source length: ${(source || "").length})`);
+        console.info(
+          `[Opal Compiler] Compiling ${mainFile} (source length: ${(source || "").length})`,
+        );
 
         try {
           const resp = await fetch("/api/compile", {
@@ -529,7 +573,11 @@
       }
 
       console.debug("[Opal Browser Shim] Unhandled Tauri command:", cmd, args);
-      if (cmd.includes("list") || cmd.includes("search") || cmd.includes("detect")) {
+      if (
+        cmd.includes("list") ||
+        cmd.includes("search") ||
+        cmd.includes("detect")
+      ) {
         return [];
       }
       return null;

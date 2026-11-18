@@ -14,6 +14,7 @@ import {
   Code2Icon,
   HelpCircleIcon,
   PlusIcon,
+  LayersIcon,
 } from "lucide-react";
 import { useDocumentStore } from "@/stores/document-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -338,6 +339,7 @@ function escapeLatex(text: string): string {
 
 export function FloatingAiAssistant() {
   const [isMinimized, setIsMinimized] = useState(false);
+  const [transparency, setTransparency] = useState<"ultra" | "glass" | "solid">("glass");
   const [promptInput, setPromptInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -519,62 +521,82 @@ export function FloatingAiAssistant() {
         isDragging && "cursor-grabbing opacity-95 shadow-2xl",
       )}
     >
-      {/* ── Minimized Floating Pill ── */}
+      {/* ── Minimized Floating Pill (Glassmorphic) ── */}
       {isMinimized ? (
         <div
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
-          className="flex cursor-grab items-center gap-2.5 rounded-full border border-primary/30 bg-card/95 px-4 py-2.5 text-card-foreground shadow-xl backdrop-blur-md transition-all hover:border-primary/60 hover:shadow-2xl"
+          className="flex cursor-grab items-center gap-2.5 rounded-full border border-white/20 dark:border-white/10 bg-card/40 px-4 py-2 text-card-foreground shadow-xl backdrop-blur-xl transition-all hover:bg-card/65 hover:border-primary/50 hover:shadow-2xl ring-1 ring-black/5"
         >
-          <div className="flex size-7 items-center justify-center rounded-full bg-primary/15 text-primary">
-            <SparklesIcon className="size-4 animate-pulse text-amber-500" />
+          <div className="flex size-6 items-center justify-center rounded-full bg-primary/20 text-primary">
+            <SparklesIcon className="size-3.5 animate-pulse text-amber-500" />
           </div>
           <div className="flex flex-col">
             <span className="font-semibold text-xs tracking-tight">Velum AI Copilot</span>
-            <span className="text-[10px] text-muted-foreground">Click or drag anywhere</span>
+            <span className="text-[9px] text-muted-foreground/80">Draggable Transparent AI</span>
           </div>
           <button
             type="button"
             onClick={() => setIsMinimized(false)}
             title="Expand AI Assistant"
-            className="ml-1 rounded-full p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="ml-1 rounded-full p-1 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
           >
             <Maximize2Icon className="size-3.5" />
           </button>
         </div>
       ) : (
-        /* ── Full Expanded Floating Assistant ── */
-        <div className="flex h-[520px] w-[390px] flex-col overflow-hidden rounded-xl border border-border/80 bg-background/95 text-foreground shadow-2xl backdrop-blur-md ring-1 ring-black/5 dark:ring-white/10">
+        /* ── Full Expanded Transparent Floating Assistant ── */
+        <div
+          className={cn(
+            "flex h-[520px] w-[390px] flex-col overflow-hidden rounded-2xl border border-white/25 dark:border-white/10 shadow-2xl transition-all duration-200 ring-1 ring-black/5 dark:ring-white/5",
+            transparency === "ultra" && "bg-background/25 backdrop-blur-md",
+            transparency === "glass" && "bg-background/45 backdrop-blur-xl",
+            transparency === "solid" && "bg-background/80 backdrop-blur-2xl",
+          )}
+        >
           {/* Header & Drag Handle */}
           <div
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
-            className="flex cursor-grab items-center justify-between border-b border-border/60 bg-muted/40 px-3.5 py-2.5 transition-colors select-none"
+            className="flex cursor-grab items-center justify-between border-b border-white/15 dark:border-white/10 bg-muted/20 px-3.5 py-2.5 backdrop-blur-md transition-colors select-none"
           >
             <div className="flex items-center gap-2">
-              <div className="flex size-6 items-center justify-center rounded-md bg-primary/10 text-primary">
+              <div className="flex size-6 items-center justify-center rounded-md bg-primary/20 text-primary shadow-sm">
                 <SparklesIcon className="size-3.5 text-amber-500" />
               </div>
               <div className="flex flex-col leading-tight">
                 <div className="flex items-center gap-1.5">
                   <span className="font-semibold text-xs tracking-tight">Velum AI Studio</span>
-                  <span className="rounded bg-primary/10 px-1 py-0.2 text-[9px] font-medium text-primary">
+                  <span className="rounded bg-primary/15 px-1 py-0.2 text-[9px] font-medium text-primary">
                     Live
                   </span>
                 </div>
-                <span className="text-[10px] text-muted-foreground">Floating LaTeX Editor Copilot</span>
+                <span className="text-[10px] text-muted-foreground/90">Floating Transparent Copilot</span>
               </div>
             </div>
 
             <div className="flex items-center gap-1 text-muted-foreground">
+              {/* Transparency cycle button */}
+              <button
+                type="button"
+                onClick={() =>
+                  setTransparency((t) =>
+                    t === "ultra" ? "glass" : t === "glass" ? "solid" : "ultra",
+                  )
+                }
+                title={`Glass Transparency: ${transparency.toUpperCase()} (Click to cycle)`}
+                className="rounded p-1 hover:bg-muted/40 hover:text-foreground transition-colors"
+              >
+                <LayersIcon className="size-3.5 text-muted-foreground hover:text-primary" />
+              </button>
               <GripHorizontalIcon className="size-4 opacity-50" />
               <button
                 type="button"
                 onClick={() => setIsMinimized(true)}
                 title="Minimize floating window"
-                className="rounded p-1 hover:bg-muted hover:text-foreground"
+                className="rounded p-1 hover:bg-muted/40 hover:text-foreground transition-colors"
               >
                 <MinusIcon className="size-3.5" />
               </button>
@@ -582,7 +604,7 @@ export function FloatingAiAssistant() {
           </div>
 
           {/* Quick Prompt Suggestions Chips */}
-          <div className="border-b border-border/40 bg-muted/20 px-3 py-1.5">
+          <div className="border-b border-white/10 dark:border-white/5 bg-background/20 px-3 py-1.5 backdrop-blur-sm">
             <div className="scrollbar-none flex items-center gap-1.5 overflow-x-auto py-0.5">
               {PRESET_PROMPTS.map((p) => (
                 <button
@@ -590,7 +612,7 @@ export function FloatingAiAssistant() {
                   type="button"
                   disabled={isProcessing}
                   onClick={() => handleSubmitPrompt(p.prompt)}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border/60 bg-background/70 px-2 py-0.5 text-[11px] text-muted-foreground transition-all hover:border-primary/50 hover:bg-primary/5 hover:text-foreground"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-white/20 dark:border-white/10 bg-background/40 px-2 py-0.5 text-[11px] text-foreground/80 backdrop-blur-sm transition-all hover:border-primary/50 hover:bg-background/70 hover:text-foreground shadow-sm"
                 >
                   <Wand2Icon className="size-2.5 text-amber-500" />
                   {p.label}
@@ -605,10 +627,10 @@ export function FloatingAiAssistant() {
               <div
                 key={m.id}
                 className={cn(
-                  "flex flex-col gap-1 rounded-lg p-2.5 leading-relaxed transition-all",
+                  "flex flex-col gap-1 rounded-xl p-2.5 leading-relaxed backdrop-blur-md transition-all",
                   m.sender === "user"
-                    ? "ml-6 bg-primary text-primary-foreground shadow-sm"
-                    : "mr-4 border border-border/50 bg-card/60 text-card-foreground shadow-sm",
+                    ? "ml-6 bg-primary/80 text-primary-foreground shadow-md"
+                    : "mr-4 border border-white/20 dark:border-white/10 bg-card/40 text-card-foreground shadow-sm",
                 )}
               >
                 <div className="flex items-center justify-between text-[10px] opacity-75">
@@ -623,7 +645,7 @@ export function FloatingAiAssistant() {
 
                 {/* Diff info & Revert button */}
                 {m.diffSummary && (
-                  <div className="mt-2 flex items-center justify-between border-t border-border/40 pt-1.5 text-[11px]">
+                  <div className="mt-2 flex items-center justify-between border-t border-white/15 dark:border-white/10 pt-1.5 text-[11px]">
                     <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
                       <CheckCircle2Icon className="size-3" /> Live Editor Updated
                     </span>
@@ -631,7 +653,7 @@ export function FloatingAiAssistant() {
                       <button
                         type="button"
                         onClick={() => handleRevert(m.previousContent)}
-                        className="inline-flex items-center gap-1 rounded border border-border/70 bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        className="inline-flex items-center gap-1 rounded border border-white/25 dark:border-white/15 bg-background/50 px-1.5 py-0.5 text-[10px] text-muted-foreground backdrop-blur-sm transition-colors hover:bg-background/80 hover:text-foreground"
                       >
                         <RotateCcwIcon className="size-2.5" /> Revert
                       </button>
@@ -641,7 +663,7 @@ export function FloatingAiAssistant() {
               </div>
             ))}
             {isProcessing && (
-              <div className="mr-6 flex items-center gap-2 rounded-lg border border-border/50 bg-muted/40 p-2.5 text-xs text-muted-foreground">
+              <div className="mr-6 flex items-center gap-2 rounded-xl border border-white/20 dark:border-white/10 bg-card/40 backdrop-blur-md p-2.5 text-xs text-muted-foreground">
                 <SparklesIcon className="size-3.5 animate-spin text-primary" />
                 <span>Modifying LaTeX code and compiling preview...</span>
               </div>
@@ -655,7 +677,7 @@ export function FloatingAiAssistant() {
               e.preventDefault();
               handleSubmitPrompt();
             }}
-            className="border-t border-border/60 bg-muted/30 p-2.5"
+            className="border-t border-white/15 dark:border-white/10 bg-muted/20 backdrop-blur-md p-2.5"
           >
             <div className="relative flex items-center">
               <input
@@ -664,18 +686,18 @@ export function FloatingAiAssistant() {
                 onChange={(e) => setPromptInput(e.target.value)}
                 placeholder="Ask AI to change code (e.g. 'Add Publications section')..."
                 disabled={isProcessing}
-                className="w-full rounded-md border border-input bg-background py-2 pr-9 pl-3 text-xs placeholder:text-muted-foreground/70 focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
+                className="w-full rounded-lg border border-white/20 dark:border-white/10 bg-background/40 py-2 pr-9 pl-3 text-xs placeholder:text-muted-foreground/60 backdrop-blur-sm focus:bg-background/70 focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none transition-colors"
               />
               <button
                 type="submit"
                 disabled={!promptInput.trim() || isProcessing}
                 title="Send instruction to modify LaTeX code"
-                className="absolute right-1.5 rounded-md p-1.5 text-primary transition-all hover:bg-primary/10 disabled:opacity-30"
+                className="absolute right-1.5 rounded-md p-1.5 text-primary transition-all hover:bg-primary/20 disabled:opacity-30"
               >
                 <SendIcon className="size-3.5" />
               </button>
             </div>
-            <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
+            <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground/80">
               <span>Modifies active document directly</span>
               <span>Enter ↵ to send</span>
             </div>

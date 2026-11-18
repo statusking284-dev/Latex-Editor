@@ -251,15 +251,15 @@ export function ProjectPicker() {
         onLearn={handleCreateTutorial}
         onSkip={markOfferSeen}
       />
-      <Button
-        variant="ghost"
-        size="icon"
-        className="absolute top-5 right-5 z-10 size-9 rounded-xl border border-border/70 bg-background/60 text-muted-foreground shadow-sm backdrop-blur"
-        title="Settings"
+      <button
+        type="button"
+        className="absolute top-6 right-6 z-20 flex size-9 items-center justify-center rounded-xl border border-border/80 bg-card/75 text-muted-foreground shadow-xs backdrop-blur-md transition-all hover:border-border hover:bg-card hover:text-foreground hover:shadow-sm active:scale-95"
+        title="Settings & Preferences"
+        aria-label="Open settings"
         onClick={() => setShowSettings(true)}
       >
-        <SettingsIcon className="size-4" />
-      </Button>
+        <SettingsIcon className="size-4 transition-transform group-hover:rotate-45" />
+      </button>
       <SettingsDialog open={showSettings} onOpenChange={setShowSettings} />
       <ProjectImportDialog
         open={showImportDialog}
@@ -268,13 +268,15 @@ export function ProjectPicker() {
         onImported={handleImportedProject}
       />
 
-      <main className="relative z-[1] grid w-full max-w-5xl grid-cols-1 gap-10 px-10 py-12 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
+      <main className="relative z-[1] grid w-full max-w-6xl grid-cols-1 gap-12 px-6 py-10 sm:px-10 lg:grid-cols-[1.08fr_0.92fr] lg:gap-14 lg:items-center">
+        {/* Left Column: Branding, Hero, Capabilities */}
         <section className="max-w-xl">
-          <div className="mb-8 flex items-center gap-3.5">
-            <div className="flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary border border-primary/20 shadow-sm">
+          {/* Brand header */}
+          <div className="mb-7 flex items-center gap-4">
+            <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary border border-primary/20 shadow-xs ring-1 ring-primary/5">
               <VelumMark className="size-7" />
             </div>
-            <div>
+            <div className="flex flex-col gap-1">
               <VelumWordmark showTagline={false} />
               <VersionBadge
                 version={appVersion}
@@ -285,89 +287,112 @@ export function ProjectPicker() {
             </div>
           </div>
 
-          <p className="mb-3 font-mono font-medium text-primary text-xs uppercase tracking-[0.2em]">
+          {/* Eyebrow badge */}
+          <div className="mb-3.5 inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/[0.06] px-3 py-1 font-mono font-medium text-primary text-[10.5px] uppercase tracking-[0.16em]">
+            <span className="size-1.5 rounded-full bg-primary/80" />
             Scholarly Manuscript Studio
-          </p>
-          <h1 className="max-w-lg font-serif text-4xl leading-[1.08] tracking-[-0.025em] sm:text-5xl text-foreground">
-            Where research becomes
-            <span className="block italic text-primary/90 font-normal">
+          </div>
+
+          {/* Headline */}
+          <h1 className="font-serif text-4xl sm:text-5xl leading-[1.08] tracking-[-0.03em] text-foreground">
+            Where research becomes{" "}
+            <span className="block font-normal italic text-primary/95 mt-1 sm:inline sm:mt-0">
               timeless literature.
             </span>
           </h1>
-          <p className="mt-5 max-w-lg text-muted-foreground text-sm leading-6">
-            A tactile, distraction-free environment for papers, theses, and books.
-            Instant offline Tectonic typesetting, rich bibliography tools, and live PDF review beside your source.
+
+          {/* Description */}
+          <p className="mt-5 max-w-lg text-muted-foreground text-[14.5px] leading-relaxed font-sans">
+            A tactile, distraction-free environment crafted for academic papers, theses, and books. Featuring instant offline Tectonic typesetting, rich bibliography tools, and live synchronized PDF review beside your source.
           </p>
 
-          <div className="mt-8 flex flex-wrap gap-x-5 gap-y-2 text-muted-foreground text-xs font-sans">
-            <span className="flex items-center gap-1.5">
-              <WifiOffIcon className="size-3.5 text-primary" />
-              Embedded offline compiler
-            </span>
-            <span className="flex items-center gap-1.5">
-              <ShieldCheckIcon className="size-3.5 text-primary" />
-              Private & local storage
-            </span>
-            <span className="flex items-center gap-1.5">
-              <SparklesIcon className="size-3.5 text-primary" />
-              SyncTeX bidirectional jump
-            </span>
+          {/* Feature indicators */}
+          <div className="mt-8 flex flex-wrap gap-2.5">
+            <div className="inline-flex items-center gap-2 rounded-xl border border-border/70 bg-card/60 px-3 py-2 text-xs backdrop-blur-xs transition-colors hover:border-border hover:bg-card">
+              <span className="flex size-5 items-center justify-center rounded-md bg-primary/10 text-primary">
+                <WifiOffIcon className="size-3" />
+              </span>
+              <span className="font-medium text-foreground/90">Embedded offline compiler</span>
+            </div>
+            <div className="inline-flex items-center gap-2 rounded-xl border border-border/70 bg-card/60 px-3 py-2 text-xs backdrop-blur-xs transition-colors hover:border-border hover:bg-card">
+              <span className="flex size-5 items-center justify-center rounded-md bg-primary/10 text-primary">
+                <ShieldCheckIcon className="size-3" />
+              </span>
+              <span className="font-medium text-foreground/90">Private & local storage</span>
+            </div>
+            <div className="inline-flex items-center gap-2 rounded-xl border border-border/70 bg-card/60 px-3 py-2 text-xs backdrop-blur-xs transition-colors hover:border-border hover:bg-card">
+              <span className="flex size-5 items-center justify-center rounded-md bg-primary/10 text-primary">
+                <SparklesIcon className="size-3" />
+              </span>
+              <span className="font-medium text-foreground/90">SyncTeX bidirectional jump</span>
+            </div>
           </div>
         </section>
 
+        {/* Right Column: Manuscript Actions & Recent Work */}
         <section
           aria-label="Start writing"
-          className="rounded-2xl border border-border/80 bg-card/95 p-2.5 shadow-[0_16px_50px_-20px_color-mix(in_oklab,var(--foreground)_25%,transparent)] backdrop-blur"
+          className="rounded-[1.75rem] border border-border/80 bg-card/95 p-3 sm:p-3.5 shadow-[0_20px_50px_-20px_color-mix(in_oklab,var(--foreground)_18%,transparent),0_1px_3px_color-mix(in_oklab,var(--foreground)_5%,transparent)] backdrop-blur-md"
         >
-          <div className="grid grid-cols-2 gap-2 p-1.5">
-            <Button
+          {/* Top row actions: New manuscript & Open project */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 p-1.5">
+            <button
+              type="button"
               onClick={() => setShowModeDialog(true)}
-              size="lg"
-              className="h-12 justify-between rounded-lg px-4 shadow-sm"
+              className="group relative flex h-[52px] items-center justify-between rounded-xl bg-primary px-4 font-medium text-primary-foreground text-sm shadow-[0_4px_16px_-2px_color-mix(in_oklab,var(--primary)_40%,transparent)] transition-all hover:bg-primary/92 hover:shadow-[0_6px_20px_-2px_color-mix(in_oklab,var(--primary)_50%,transparent)] active:scale-[0.99]"
             >
-              <span className="flex items-center gap-2 font-medium">
-                <FolderPlusIcon className="size-4" />
+              <span className="flex items-center gap-2.5 font-medium tracking-tight">
+                <span className="flex size-7 items-center justify-center rounded-lg bg-primary-foreground/15">
+                  <FolderPlusIcon className="size-4" />
+                </span>
                 New manuscript
               </span>
-              <ArrowRightIcon className="size-3.5 opacity-70" />
-            </Button>
-            <Button
+              <ArrowRightIcon className="size-4 opacity-80 transition-transform duration-200 group-hover:translate-x-1" />
+            </button>
+
+            <button
+              type="button"
               onClick={handleOpenFolder}
-              size="lg"
-              variant="outline"
-              className="h-12 justify-start gap-2 rounded-lg bg-background/70 px-4 border-border/70"
+              className="group flex h-[52px] items-center justify-between rounded-xl border border-border/80 bg-secondary/50 px-4 font-medium text-foreground text-sm transition-all hover:border-border hover:bg-secondary/80 active:scale-[0.99]"
             >
-              <FolderOpenIcon className="size-4 text-muted-foreground" />
-              Open project
-            </Button>
+              <span className="flex items-center gap-2.5 font-medium tracking-tight">
+                <span className="flex size-7 items-center justify-center rounded-lg bg-muted text-muted-foreground transition-colors group-hover:text-foreground">
+                  <FolderOpenIcon className="size-4" />
+                </span>
+                Open project
+              </span>
+              <span className="text-[11px] font-mono text-muted-foreground opacity-60">Folder</span>
+            </button>
           </div>
 
+          {/* Import project card */}
           <button
             type="button"
             onClick={() => setShowImportDialog(true)}
-            className="group mx-2 mb-2 flex w-[calc(100%-1rem)] items-center gap-3 rounded-xl border border-border/70 bg-background/45 px-3 py-2.5 text-left transition-colors hover:bg-muted/70"
+            className="group mx-1.5 my-1.5 flex w-[calc(100%-0.75rem)] items-center gap-3 rounded-xl border border-border/70 bg-background/50 p-3 text-left transition-all hover:border-border hover:bg-muted/60 active:scale-[0.995]"
           >
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/60 text-muted-foreground transition-colors group-hover:border-primary/30 group-hover:text-primary">
               <ImportIcon className="size-4" />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block font-medium text-sm">
+              <span className="block font-medium text-sm text-foreground">
                 Import a project
               </span>
               <span className="block text-muted-foreground text-xs">
                 ZIP archive or public GitHub repository
               </span>
             </span>
-            <ArrowRightIcon className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+            <ArrowRightIcon className="size-4 text-muted-foreground/70 transition-transform duration-200 group-hover:translate-x-1 group-hover:text-foreground" />
           </button>
 
+          {/* Tutorial / Onboarding card */}
           <button
             type="button"
             onClick={handleCreateTutorial}
             disabled={isCreatingTutorial}
-            className="group mx-2 mb-2 flex w-[calc(100%-1rem)] items-center gap-3 rounded-xl border border-primary/15 bg-primary/[0.06] p-3 text-left transition-colors hover:bg-primary/10 disabled:opacity-60"
+            className="group mx-1.5 mb-2 flex w-[calc(100%-0.75rem)] items-center gap-3 rounded-xl border border-primary/20 bg-primary/[0.07] p-3 text-left transition-all hover:border-primary/35 hover:bg-primary/[0.11] active:scale-[0.995] disabled:opacity-60"
           >
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/12 text-primary">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
               {isCreatingTutorial ? (
                 <Loader2Icon className="size-4 animate-spin" />
               ) : (
@@ -375,31 +400,38 @@ export function ProjectPicker() {
               )}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block font-medium text-sm">
+              <span className="block font-medium text-sm text-foreground">
                 New to LaTeX? Start here
               </span>
               <span className="mt-0.5 block text-muted-foreground text-xs">
-                Build a first paper in about five minutes
+                Interactive guide · Build a first paper in five minutes
               </span>
             </span>
-            <ArrowRightIcon className="size-4 text-primary transition-transform group-hover:translate-x-0.5" />
+            <ArrowRightIcon className="size-4 text-primary transition-transform duration-200 group-hover:translate-x-1" />
           </button>
 
-          <div className="border-border/70 border-t px-3 pt-3 pb-2">
-            <div className="mb-2 flex items-center justify-between text-muted-foreground text-xs">
-              <span className="flex items-center gap-1.5">
-                <ClockIcon className="size-3.5" />
+          {/* Recent work list */}
+          <div className="border-border/70 border-t mx-1.5 pt-3 pb-1">
+            <div className="mb-2.5 flex items-center justify-between px-1.5 text-muted-foreground text-xs">
+              <span className="flex items-center gap-1.5 font-medium text-foreground/80">
+                <ClockIcon className="size-3.5 text-muted-foreground" />
                 Recent work
+                {recentProjects.length > 0 && (
+                  <span className="rounded-full bg-muted px-1.5 py-0.2 font-mono text-[10px] text-muted-foreground">
+                    {recentProjects.length}
+                  </span>
+                )}
               </span>
-              <span>
-                <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[9px]">
+              <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <kbd className="rounded border border-border/80 bg-muted/80 px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground">
                   ⌘K
-                </kbd>{" "}
-                commands
+                </kbd>
+                <span>commands</span>
               </span>
             </div>
+
             {recentProjects.length > 0 ? (
-              <div className="max-h-52 space-y-1 overflow-y-auto">
+              <div className="max-h-56 space-y-1 overflow-y-auto pr-1">
                 {recentProjects.map((project) => {
                   const isOpeningThis = openingPath === project.path;
                   const isBlocked = openingPath !== null && !isOpeningThis;
@@ -407,33 +439,36 @@ export function ProjectPicker() {
                     <div
                       key={project.path}
                       className={cn(
-                        "group flex items-center gap-2 rounded-lg px-2 py-2 transition-colors",
+                        "group flex items-center gap-2.5 rounded-xl px-2.5 py-2 transition-all",
                         isOpeningThis && "bg-muted",
-                        !isBlocked && "hover:bg-muted",
+                        !isBlocked && "hover:bg-muted/70 hover:shadow-2xs",
                         isBlocked && "opacity-50",
                       )}
                     >
-                      {isOpeningThis ? (
-                        <Loader2Icon className="size-4 shrink-0 animate-spin text-muted-foreground" />
-                      ) : (
-                        <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
-                      )}
+                      <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/70 text-muted-foreground transition-colors group-hover:bg-primary/10 group-hover:text-primary">
+                        {isOpeningThis ? (
+                          <Loader2Icon className="size-4 animate-spin text-primary" />
+                        ) : (
+                          <FileTextIcon className="size-4" />
+                        )}
+                      </div>
                       <button
+                        type="button"
                         className="flex min-w-0 flex-1 flex-col items-start text-left disabled:cursor-not-allowed"
                         disabled={openingPath !== null}
                         onClick={() => handleOpenRecent(project.path)}
                       >
-                        <span className="w-full truncate font-medium text-sm">
+                        <span className="w-full truncate font-medium text-sm text-foreground group-hover:text-primary transition-colors">
                           {project.name}
                         </span>
-                        <span className="w-full truncate text-[10px] text-muted-foreground">
-                          {isOpeningThis ? "Opening…" : project.path}
+                        <span className="w-full truncate font-mono text-[10.5px] text-muted-foreground">
+                          {isOpeningThis ? "Opening manuscript…" : project.path}
                         </span>
                       </button>
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="size-6 shrink-0 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
+                        className="size-7 shrink-0 rounded-lg opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive"
                         disabled={openingPath !== null}
                         aria-label={`Remove ${project.name} from recent projects`}
                         onClick={(event) => {
@@ -448,10 +483,16 @@ export function ProjectPicker() {
                 })}
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border/80 p-5 text-center text-muted-foreground text-xs">
-                <FileTextIcon className="size-5 opacity-40 text-muted-foreground" />
-                <span className="font-medium text-foreground/80">No recent manuscripts yet</span>
-                <span className="text-[11px] text-muted-foreground">Begin a new paper or open a folder to start writing.</span>
+              <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border/80 p-6 text-center text-muted-foreground">
+                <div className="flex size-9 items-center justify-center rounded-full bg-muted/60 text-muted-foreground/60">
+                  <FileTextIcon className="size-4" />
+                </div>
+                <div>
+                  <p className="font-medium text-foreground/80 text-xs">No recent manuscripts yet</p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    Create a new manuscript or open an existing folder to begin.
+                  </p>
+                </div>
               </div>
             )}
           </div>
@@ -460,47 +501,65 @@ export function ProjectPicker() {
 
       {/* New Project mode selection dialog */}
       <Dialog open={showModeDialog} onOpenChange={setShowModeDialog}>
-        <DialogContent showCloseButton={false} className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Create New Project</DialogTitle>
-            <DialogDescription>How would you like to start?</DialogDescription>
+        <DialogContent showCloseButton={true} className="sm:max-w-lg border-border/80 bg-card/98 backdrop-blur-md rounded-2xl p-6 shadow-xl">
+          <DialogHeader className="space-y-1.5 pb-2">
+            <DialogTitle className="font-serif text-2xl tracking-tight text-foreground">
+              Create New Manuscript
+            </DialogTitle>
+            <DialogDescription className="text-muted-foreground text-xs">
+              Choose how you would like to initiate your document workspace.
+            </DialogDescription>
           </DialogHeader>
-          <div className="flex gap-3 pt-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
             <button
+              type="button"
               onClick={() => handleSelectMode("template")}
-              className="group flex flex-1 flex-col items-center gap-3 rounded-xl border border-foreground/10 p-5 text-center transition-all hover:border-foreground/20 hover:bg-muted/50"
+              className="group relative flex flex-col items-start gap-3 rounded-2xl border border-primary/20 bg-primary/[0.04] p-5 text-left transition-all hover:border-primary/40 hover:bg-primary/[0.08] hover:shadow-xs active:scale-[0.99]"
             >
-              <div className="flex size-12 items-center justify-center rounded-lg bg-muted/50 transition-colors group-hover:bg-muted">
-                <SparklesIcon className="size-6 text-muted-foreground transition-colors group-hover:text-foreground" />
+              <div className="flex size-11 items-center justify-center rounded-xl bg-primary/12 text-primary transition-transform group-hover:scale-105">
+                <SparklesIcon className="size-5" />
               </div>
-              <div>
-                <div className="font-semibold text-sm">Guided Setup</div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 font-medium text-foreground text-sm">
+                  <span>Guided Setup</span>
+                  <span className="rounded-full bg-primary/12 px-2 py-0.5 font-mono text-[9.5px] font-semibold text-primary uppercase tracking-wide">
+                    Featured
+                  </span>
+                </div>
                 <p className="mt-1 text-muted-foreground text-xs leading-relaxed">
-                  Pick a template and let AI help you get started
+                  Select from academic templates with intelligent structure and sample figures.
                 </p>
               </div>
-              <span className="rounded-full bg-foreground/8 px-2 py-0.5 font-medium text-[10px] text-muted-foreground">
-                Recommended
-              </span>
+              <div className="flex items-center gap-1 text-[11px] font-medium text-primary">
+                <span>Browse templates</span>
+                <ArrowRightIcon className="size-3 transition-transform group-hover:translate-x-0.5" />
+              </div>
             </button>
 
             <button
+              type="button"
               onClick={handleCreateBlankDocument}
               disabled={isCreatingBlank}
-              className="group flex flex-1 flex-col items-center gap-3 rounded-xl border border-border p-5 text-center transition-all hover:border-foreground/20 hover:bg-muted/50"
+              className="group flex flex-col items-start gap-3 rounded-2xl border border-border/80 bg-background/50 p-5 text-left transition-all hover:border-foreground/20 hover:bg-muted/50 hover:shadow-xs active:scale-[0.99] disabled:opacity-60"
             >
-              <div className="flex size-12 items-center justify-center rounded-lg bg-muted/50 transition-colors group-hover:bg-muted">
+              <div className="flex size-11 items-center justify-center rounded-xl bg-muted text-muted-foreground transition-transform group-hover:scale-105 group-hover:text-foreground">
                 {isCreatingBlank ? (
-                  <Loader2Icon className="size-6 animate-spin text-muted-foreground" />
+                  <Loader2Icon className="size-5 animate-spin text-primary" />
                 ) : (
-                  <FileTextIcon className="size-6 text-muted-foreground transition-colors group-hover:text-foreground" />
+                  <FileTextIcon className="size-5" />
                 )}
               </div>
-              <div>
-                <div className="font-semibold text-sm">Blank Document</div>
+              <div className="flex-1">
+                <div className="font-medium text-foreground text-sm">
+                  Blank Document
+                </div>
                 <p className="mt-1 text-muted-foreground text-xs leading-relaxed">
-                  Start with an empty LaTeX file
+                  Start fresh with a minimal scholarly LaTeX document and clean preamble.
                 </p>
+              </div>
+              <div className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground group-hover:text-foreground">
+                <span>Quick blank start</span>
+                <ArrowRightIcon className="size-3 transition-transform group-hover:translate-x-0.5" />
               </div>
             </button>
           </div>
@@ -530,86 +589,87 @@ function VersionBadge({
       return (
         <button
           onClick={onInstall}
-          className="flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-primary text-xs transition-colors hover:bg-primary/20"
+          className="inline-flex items-center gap-1.5 rounded-full bg-primary/12 px-2.5 py-0.5 text-primary text-[11px] font-medium transition-all hover:bg-primary/20 hover:scale-[1.02]"
         >
-          <ArrowUpCircleIcon className="size-3.5" />v{updateStatus.version}{" "}
-          available — click to update
+          <ArrowUpCircleIcon className="size-3" />
+          <span>v{updateStatus.version} available · Click to update</span>
         </button>
       );
 
     case "downloading":
       return (
-        <div className="flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-muted-foreground text-xs">
-          <Loader2Icon className="size-3.5 animate-spin" />
-          Downloading... {updateStatus.percent}%
+        <div className="inline-flex items-center gap-1.5 rounded-full bg-muted/80 px-2.5 py-0.5 text-muted-foreground text-[11px]">
+          <Loader2Icon className="size-3 animate-spin text-primary" />
+          <span>Downloading update {updateStatus.percent}%</span>
         </div>
       );
 
     case "installing":
       return (
-        <div className="flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-muted-foreground text-xs">
-          <Loader2Icon className="size-3.5 animate-spin" />
-          Installing...
+        <div className="inline-flex items-center gap-1.5 rounded-full bg-muted/80 px-2.5 py-0.5 text-muted-foreground text-[11px]">
+          <Loader2Icon className="size-3 animate-spin text-primary" />
+          <span>Installing update…</span>
         </div>
       );
 
     case "ready":
       return (
-        <div className="flex items-center gap-1.5 rounded-full bg-green-500/10 px-3 py-1 text-green-600 text-xs">
-          <CheckCircle2Icon className="size-3.5" />
-          Update complete — restarting...
+        <div className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 text-emerald-700 text-[11px] font-medium">
+          <CheckCircle2Icon className="size-3 text-emerald-600" />
+          <span>Update complete · Restarting</span>
         </div>
       );
 
     case "checking":
       return (
-        <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
-          <Loader2Icon className="size-3 animate-spin" />v{version} — checking
-          for updates...
+        <div className="inline-flex items-center gap-1.5 text-muted-foreground text-[11px] font-mono">
+          <Loader2Icon className="size-3 animate-spin text-muted-foreground" />
+          <span>v{version} · checking updates…</span>
         </div>
       );
 
     case "error":
       return (
-        <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
+        <div className="inline-flex items-center gap-1.5 text-muted-foreground text-[11px] font-mono">
           <span>v{version}</span>
-          <span className="mx-0.5">·</span>
+          <span className="opacity-40">·</span>
           <button
             onClick={onCheck}
-            className="flex items-center gap-1 transition-colors hover:text-foreground"
+            className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
           >
             <RefreshCwIcon className="size-3" />
-            Retry
+            <span>Retry</span>
           </button>
         </div>
       );
 
     case "up-to-date":
       return (
-        <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
+        <div className="inline-flex items-center gap-1.5 text-muted-foreground text-[11px] font-mono">
           <span>v{version}</span>
-          <span className="mx-0.5">·</span>
+          <span className="opacity-40">·</span>
           <button
             onClick={onCheck}
-            className="flex items-center gap-1 transition-colors hover:text-foreground"
+            className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
+            title="Click to check again"
           >
-            <CheckCircle2Icon className="size-3 text-green-500" />
-            Up to date
+            <span className="size-1.5 rounded-full bg-emerald-500" />
+            <span>Up to date</span>
           </button>
         </div>
       );
 
     default:
       return (
-        <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
+        <div className="inline-flex items-center gap-1.5 text-muted-foreground text-[11px] font-mono">
           <span>v{version}</span>
-          <span className="mx-0.5">·</span>
+          <span className="opacity-40">·</span>
           <button
             onClick={onCheck}
-            className="flex items-center gap-1 transition-colors hover:text-foreground"
+            className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
           >
-            <RefreshCwIcon className="size-3" />
-            Check for updates
+            <RefreshCwIcon className="size-3 opacity-70" />
+            <span>Check for updates</span>
           </button>
         </div>
       );

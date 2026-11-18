@@ -209,16 +209,20 @@ function tectonicCompilerPlugin() {
             );
 
             proxyReq.on("error", (err: any) => {
-              res.statusCode = 502;
-              res.setHeader("Content-Type", "application/json");
-              res.end(JSON.stringify({ error: `Could not connect to Ollama at ${destUrl}: ${err.message}` }));
+              if (!res.headersSent) {
+                res.statusCode = 502;
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ error: `Could not connect to Ollama at ${destUrl}: ${err.message}` }));
+              }
             });
 
             proxyReq.on("timeout", () => {
               proxyReq.destroy();
-              res.statusCode = 504;
-              res.setHeader("Content-Type", "application/json");
-              res.end(JSON.stringify({ error: `Connection to ${destUrl} timed out.` }));
+              if (!res.headersSent) {
+                res.statusCode = 504;
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ error: `Connection to ${destUrl} timed out.` }));
+              }
             });
 
             if (bodyData) {

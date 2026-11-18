@@ -81,15 +81,17 @@ export function VelumWordmark({
   showTagline?: boolean;
 }) {
   return (
-    <div className={`flex flex-col ${className}`}>
-      <div className="flex items-center gap-1.5 font-serif font-semibold tracking-[-0.02em] text-foreground leading-none">
-        <span className="text-lg sm:text-xl tracking-tight">Velum</span>
-        <span className="rounded bg-primary/10 px-1.5 py-0.5 font-sans font-medium text-[10px] text-primary uppercase tracking-wider">
+    <div className={`flex flex-col justify-center ${className}`}>
+      <div className="flex items-center gap-2 leading-none">
+        <span className="font-serif font-medium text-xl sm:text-2xl tracking-[-0.03em] text-foreground">
+          Velum
+        </span>
+        <span className="rounded-md border border-primary/25 bg-primary/10 px-1.5 py-0.5 font-mono font-semibold text-[9.5px] text-primary uppercase tracking-[0.14em]">
           Studio
         </span>
       </div>
       {showTagline && (
-        <span className="font-sans text-[11px] text-muted-foreground tracking-normal">
+        <span className="mt-1 font-sans text-xs text-muted-foreground tracking-normal">
           Scholarly LaTeX Workspace
         </span>
       )}
